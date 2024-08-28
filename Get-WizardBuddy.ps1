@@ -26,7 +26,7 @@ $ims.Write($IconBytes, 0, $IconBytes.Length)
 
 # Create the form
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "Get-Wizard"
+$form.Text = ""
 $form.Size = New-Object System.Drawing.Size(148, 178)
 $form.Icon = [System.Drawing.Icon]::FromHandle((New-Object System.Drawing.Bitmap -Argument $ims).GetHIcon())
 $form.TopMost = $true
