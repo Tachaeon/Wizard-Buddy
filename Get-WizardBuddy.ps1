@@ -71,5 +71,31 @@ $pictureBox.Add_MouseClick({
         }
     })
 
+# Add MouseWheel event to resize the form
+$form.Add_MouseWheel({
+        param($sender, $e)
+
+        # Check if the Ctrl key is pressed
+        if ([System.Windows.Forms.Control]::ModifierKeys -eq [System.Windows.Forms.Keys]::Control) {
+            $change = 20  # Change size by 20 pixels
+
+            # Calculate new width and height based on the scroll direction
+            $newWidth = $form.Width + ($e.Delta / [Math]::Abs($e.Delta)) * $change
+            $newHeight = $form.Height + ($e.Delta / [Math]::Abs($e.Delta)) * $change
+
+            # Ensure the form doesn't get too small
+            $minSize = 100
+            if ($newWidth -lt $minSize) {
+                $newWidth = $minSize
+            }
+            if ($newHeight -lt $minSize) {
+                $newHeight = $minSize
+            }
+
+            # Apply the new size to the form
+            $form.Size = New-Object System.Drawing.Size($newWidth, $newHeight)
+        }
+    })
+
 # Show the Form
 $form.ShowDialog()

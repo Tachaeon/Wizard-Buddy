@@ -19,6 +19,7 @@ Add-Type @"
 $WM_NCLBUTTONDOWN = 0xA1
 $HTCAPTION = 0x2
 
+# Placeholder for the icon (optional)
 $IconBase64 = "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"
 $IconBytes = [Convert]::FromBase64String($IconBase64)
 $ims = New-Object IO.MemoryStream($IconBytes, 0, $IconBytes.Length)
@@ -27,19 +28,15 @@ $ims.Write($IconBytes, 0, $IconBytes.Length)
 # Create the form
 $form = New-Object System.Windows.Forms.Form
 $form.Text = ""
-$form.Size = New-Object System.Drawing.Size(148, 178)
-$form.Icon = [System.Drawing.Icon]::FromHandle((New-Object System.Drawing.Bitmap -Argument $ims).GetHIcon())
 $form.TopMost = $true
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = 'None'  # Remove the border
-$form.BackColor = [System.Drawing.Color]::Magenta  # Set the form's background color
+#$form.BackColor = [System.Drawing.Color]::Transparent  # Set the form's background color
 $form.TransparencyKey = $form.BackColor  # Make the background color transparent
 
 # Create PictureBox to hold the GIF
 $pictureBox = New-Object System.Windows.Forms.PictureBox
 $pictureBox.SizeMode = "StretchImage"
-$pictureBox.Dock = "None"
-$pictureBox.Size = New-Object System.Drawing.Size(128, 128)
 $pictureBox.BackColor = [System.Drawing.Color]::Transparent
 
 # Base64 encoded GIF (Placeholder)
@@ -52,10 +49,21 @@ $imageBytes = [Convert]::FromBase64String($base64String)
 $memoryStream = New-Object System.IO.MemoryStream(, $imageBytes)
 $loadedImage = [System.Drawing.Image]::FromStream($memoryStream)
 
+# Set the initial size of the PictureBox to match the original image size
 $pictureBox.Image = $loadedImage
+$pictureBox.Size = $loadedImage.Size
+
+# Set the form size to match the image size
+$form.Size = $loadedImage.Size
 
 # Add PictureBox to the form
 $form.Controls.Add($pictureBox)
+
+# Adjust PictureBox size and location on form resize
+$form.Add_Resize({
+        $pictureBox.Size = $form.ClientSize
+        $pictureBox.Location = New-Object System.Drawing.Point(0, 0)
+    })
 
 # Add MouseDown event to the PictureBox to enable dragging
 $pictureBox.Add_MouseDown({
@@ -63,231 +71,39 @@ $pictureBox.Add_MouseDown({
         [User32]::SendMessage($form.Handle, $WM_NCLBUTTONDOWN, $HTCAPTION, 0) | Out-Null
     })
 
-# Create a ContextMenuStrip
-$contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
-
-$base64Icon = "iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAEG0lEQVRoQ9WZTWgTQRTH5yVpI21B8AOttKBSQRRqYgTRg+i19GqhNC14KnjWU0EEsQfBowe92UTBeBTrTQ8eRAptEKQHLQpGK0Kh4EfZtpvx7SYbdzfzPVutc0qyM+/9fzNv3rydANmiRks5CuNVCJtn/WbrPuLA1lgw3hPqfQ4D0LuFLtLl/oz/buszcYBAfBvAzGA3gdSPpuBfCNdtK973kYSRSJjMDmRh6L1DKQEA4q9EvCHkTQSYSsJ34gBJiNKxkRgALRcuE+reSTrGZTCJAITjPnAYz0CtDV7OfcfA6vG/L1XTcJ3UZSJFz60BWOJ5ELSc+4ri98UF8WBVwKwAROJZoaQDqyLeOgslCYA5ax6KCwVV4a1V1h3QiuVS7ht+3iuMz9BJTB8WjhLXXVTtr6rLOIRksx8PIVrOfyGU9oqFpaZhfF7rfFAGoDP5UwToXLDhtAGa5YVsZnU3tDpArL7BjFLHjCIcH6mF/iUAq77B4qwDi7N11ZhGG7ew79V/sgK8MlgYRlgHQbGaCguWhh1jjBRY1kH03CvYiBdKjMaKZRmAyfuD0h6g5dN9hDqffJ3ZIxkYeey20mmlsJM47mqEIbuRhZG3beGF++YJ7pth3qSwAFgHYni8FIAzazV01m+yerxV4Im3AsAZc3DGOplCUx15GJurGkJ4q9nnjwV4iSfwOZYd+qhwgay7z0WpVbgCujFrAmM7hgtAKxfTxHm3KXOge/AIk0LbWQGLML5wTJiqeQ9pKb9MCN0vA8Dn9xBiUqEftwstD2KSSDWSRHtbR/tZ7sbnA+Q28FlGRZjtKtiEKj+EyrkPuIEPqgBgn2WEOKDYN9JNJr6x0ckrPBTPsuxbbeKwQZNVQPEO2mBnuZhanv1EAEzEe/qUZr8JsoUAsISZYkA3fDBJnEAE1XNkDQG6tENIYZbqaDgdNkwrZ3YRZ20l5qytn4LtPyZ29+6AoWdeuLU1aSkhcqRbsLWVCy/OZ0ht1ct2wmZ8EkdmNnbI6Ir3bdF6D0y88S94g0Yf5CdInd4XESQCIJsl1ZDggHslOTMaZAlCKYQUxc9jv7ysL/fGjvXKCXAbC70rwtWROVR9rpwSY+8Tcfu0dHKSZNKzMDrHKy0iQxJZAWXxTdeysFCdNK+fNYCu+IY4WMGzY4+OUF5fKwAz8YGU1BReYk3bQhgBoHDvesS7JrFrGTIMo9WnNka0AexmnSEVsv1QfF0zhdACQPEldFQ0dcaN49jfsTr2dQGYf9rpOEwaYtsAkE1yCC5VP+pOxvYBSMENGFu49t8CmB5ueitQOd5JnA5mXa47c/H+fwXAc6ryv4ABzGcEaNzUaTatFQhsYzrllr+a/v3uprPvjzVxGAKJplUgNbz+YF764sot4TXN4bA/G+GBnd/2jblAobJvMgAAAABJRU5ErkJggg=="
-$iconBytes = [Convert]::FromBase64String($base64Icon)
-$iconStream = New-Object System.IO.MemoryStream(, $iconBytes)
-$Icon = [System.Drawing.Image]::FromStream($iconStream)
-$menuItemBase64 = New-Object System.Windows.Forms.ToolStripMenuItem("Base64 Converter", $Icon)
-
-$menuItemBase64.Add_Click({
-        Start-Job -ScriptBlock {
-            Add-Type -AssemblyName System.Windows.Forms
-            Add-Type -AssemblyName System.Drawing
-            function Get-FileTypeFromBase64 {
-                param (
-                    [string]$Base64String
-                )
-                # Decode the Base64 string to byte array
-                $FileBytes = [Convert]::FromBase64String($Base64String)
-    
-                # Get the file signature (first few bytes)
-                $FileSignature = -join ($FileBytes[0..3] | ForEach-Object { $_.ToString("X2") })
-                $FileType = switch ($FileSignature) {
-                    '89504E47' {
-                        'png' 
-                    }   # PNG
-                    'FFD8FFE0' {
-                        'jpg' 
-                    }   # JPEG
-                    'FFD8FFE1' {
-                        'jpg' 
-                    }   # JPEG
-                    'FFD8FFE2' {
-                        'jpg' 
-                    }   # JPEG
-                    '47494638' {
-                        'gif' 
-                    }   # GIF
-                    '25504446' {
-                        'pdf' 
-                    }   # PDF
-                    '504B0304' {
-                        'zip' 
-                    }   # ZIP
-                    '4D5A' {
-                        'exe' 
-                    }   # EXE (MZ header)
-                    default {
-                        'unknown' 
-                    }
-                }
-                return $FileType, $FileBytes
-            }
-    
-            function Save-FileFromBase64 {
-                param (
-                    [string]$Base64String,
-                    [string]$OutputDirectory
-                )
-                $result = Get-FileTypeFromBase64 -Base64String $Base64String
-                $FileType = $result[0]
-                $FileBytes = $result[1]
-    
-                if ($FileType -eq 'unknown') {
-                    Write-Output "Unknown file type. Cannot save the file."
-                    return
-                }
-                $FileName = [System.IO.Path]::Combine($OutputDirectory, [System.Guid]::NewGuid().ToString() + ".$FileType")
-                [System.IO.File]::WriteAllBytes($FileName, $FileBytes)
-            }
-    
-            function Base64 {
-                $Base64_Code = [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes("$File"))
-                Set-Clipboard -Value $Base64_Code
-                [System.Windows.Forms.MessageBox]::Show("Base64 sent to clipboard.", "Base64 --> Clipboard", 'OK', 'Information')
-            }
-    
-            function Error {
-                [System.Windows.Forms.MessageBox]::Show("$($Error[0].Exception.Message)", 'ERROR', 'OK', 'ERROR')
-            }
-    
-            $IconBase64 = "iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAEG0lEQVRoQ9WZTWgTQRTH5yVpI21B8AOttKBSQRRqYgTRg+i19GqhNC14KnjWU0EEsQfBowe92UTBeBTrTQ8eRAptEKQHLQpGK0Kh4EfZtpvx7SYbdzfzPVutc0qyM+/9fzNv3rydANmiRks5CuNVCJtn/WbrPuLA1lgw3hPqfQ4D0LuFLtLl/oz/buszcYBAfBvAzGA3gdSPpuBfCNdtK973kYSRSJjMDmRh6L1DKQEA4q9EvCHkTQSYSsJ34gBJiNKxkRgALRcuE+reSTrGZTCJAITjPnAYz0CtDV7OfcfA6vG/L1XTcJ3UZSJFz60BWOJ5ELSc+4ri98UF8WBVwKwAROJZoaQDqyLeOgslCYA5ax6KCwVV4a1V1h3QiuVS7ht+3iuMz9BJTB8WjhLXXVTtr6rLOIRksx8PIVrOfyGU9oqFpaZhfF7rfFAGoDP5UwToXLDhtAGa5YVsZnU3tDpArL7BjFLHjCIcH6mF/iUAq77B4qwDi7N11ZhGG7ew79V/sgK8MlgYRlgHQbGaCguWhh1jjBRY1kH03CvYiBdKjMaKZRmAyfuD0h6g5dN9hDqffJ3ZIxkYeey20mmlsJM47mqEIbuRhZG3beGF++YJ7pth3qSwAFgHYni8FIAzazV01m+yerxV4Im3AsAZc3DGOplCUx15GJurGkJ4q9nnjwV4iSfwOZYd+qhwgay7z0WpVbgCujFrAmM7hgtAKxfTxHm3KXOge/AIk0LbWQGLML5wTJiqeQ9pKb9MCN0vA8Dn9xBiUqEftwstD2KSSDWSRHtbR/tZ7sbnA+Q28FlGRZjtKtiEKj+EyrkPuIEPqgBgn2WEOKDYN9JNJr6x0ckrPBTPsuxbbeKwQZNVQPEO2mBnuZhanv1EAEzEe/qUZr8JsoUAsISZYkA3fDBJnEAE1XNkDQG6tENIYZbqaDgdNkwrZ3YRZ20l5qytn4LtPyZ29+6AoWdeuLU1aSkhcqRbsLWVCy/OZ0ht1ct2wmZ8EkdmNnbI6Ir3bdF6D0y88S94g0Yf5CdInd4XESQCIJsl1ZDggHslOTMaZAlCKYQUxc9jv7ysL/fGjvXKCXAbC70rwtWROVR9rpwSY+8Tcfu0dHKSZNKzMDrHKy0iQxJZAWXxTdeysFCdNK+fNYCu+IY4WMGzY4+OUF5fKwAz8YGU1BReYk3bQhgBoHDvesS7JrFrGTIMo9WnNka0AexmnSEVsv1QfF0zhdACQPEldFQ0dcaN49jfsTr2dQGYf9rpOEwaYtsAkE1yCC5VP+pOxvYBSMENGFu49t8CmB5ueitQOd5JnA5mXa47c/H+fwXAc6ryv4ABzGcEaNzUaTatFQhsYzrllr+a/v3uprPvjzVxGAKJplUgNbz+YF764sot4TXN4bA/G+GBnd/2jblAobJvMgAAAABJRU5ErkJggg=="
-            $IconBytes = [Convert]::FromBase64String($IconBase64)
-            $ims = New-Object IO.MemoryStream($IconBytes, 0, $IconBytes.Length)
-            $ims.Write($IconBytes, 0, $IconBytes.Length)
-    
-            $form = New-Object System.Windows.Forms.Form
-            $form.Text = "Base64 Converter"
-            $form.Size = New-Object System.Drawing.Size(390, 140)
-            $form.Icon = [System.Drawing.Icon]::FromHandle((New-Object System.Drawing.Bitmap -Argument $ims).GetHIcon())
-            $form.StartPosition = "CenterScreen"
-            $form.FormBorderStyle = "FixedDialog"
-    
-            $filelabel = New-Object System.Windows.Forms.Label
-            $filelabel.Text = "File:"
-            $filelabel.Location = New-Object System.Drawing.Point(10, 14)
-            $filelabel.Size = New-Object System.Drawing.Size(30, 20)
-            $form.Controls.Add($filelabel)
-    
-            $localfiletextBox = New-Object System.Windows.Forms.TextBox
-            $localfiletextBox.Location = New-Object System.Drawing.Point(45, 11)
-            $localfiletextBox.Size = New-Object System.Drawing.Size(250, 20)
-            $form.Controls.Add($localfiletextBox)
-    
-            $localfilebutton = New-Object System.Windows.Forms.Button
-            $localfilebutton.Text = "Browse"
-            $localfilebutton.Location = New-Object System.Drawing.Point(302, 10)
-            $localfilebutton.Size = New-Object System.Drawing.Size(75, 20)
-            $form.Controls.Add($localfilebutton)
-    
-            $localfilebutton.Add_Click({
-                    $fileDialog = New-Object System.Windows.Forms.OpenFileDialog
-                    $fileDialog.Filter = "PNG files (*.png)|*.png|GIF files (*.gif)|*.gif|PDF files (*.pdf)|*.pdf|ZIP files (*.zip)|*.zip|Executable files (*.exe)|*.exe|All files (*.*)|*.*"
-                    if ($fileDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-                        $textBox.Text = $fileDialog.FileName
-                    }
-                })
-    
-            $urltextbox = New-Object System.Windows.Forms.TextBox
-            $urltextbox.Location = New-Object System.Drawing.Point(45, 41)
-            $urltextbox.Size = New-Object System.Drawing.Size(250, 20)
-            $form.Controls.Add($urltextbox)
-    
-            $urllabel = New-Object System.Windows.Forms.Label
-            $urllabel.Text = "URL:"
-            $urllabel.Location = New-Object System.Drawing.Point(10, 45)
-            $urllabel.Size = New-Object System.Drawing.Size(100, 20)
-            $form.Controls.Add($urllabel)
-    
-            $frombase64Button = New-Object System.Windows.Forms.Button
-            $frombase64Button.Text = "From: Base64"
-            $frombase64Button.Location = New-Object System.Drawing.Point(90, 72)
-            $frombase64Button.Size = New-Object System.Drawing.Size(100, 30)
-            $form.Controls.Add($frombase64Button)
-    
-            $frombase64Button.Add_Click({
-                    try {
-                        $base64String = Get-Clipboard
-                        $outputDirectory = (New-Object -ComObject Shell.Application).NameSpace('shell:Downloads').Self.Path
-                        Save-FileFromBase64 -Base64String $base64String -OutputDirectory $outputDirectory
-                        [System.Windows.Forms.MessageBox]::Show("You file has been saved here:`n`n$outputDirectory", "Clipboard --> Base64", 'OK', 'Information')
-                    }
-                    catch {
-                        Get-Error
-                    }
-                })
-    
-            $tobase64button = New-Object System.Windows.Forms.Button
-            $tobase64button.Text = "To: Base64"
-            $tobase64button.Location = New-Object System.Drawing.Point(200, 72)
-            $tobase64button.Size = New-Object System.Drawing.Size(100, 30)
-            $form.Controls.Add($tobase64button)
-    
-            $tobase64button.Add_Click({
-                    if ([string]::IsNullOrWhiteSpace($localfiletextBox.text) -and [string]::IsNullOrWhiteSpace($urltextBox.text)) {
-                        [System.Windows.Forms.MessageBox]::Show("Please select a file or enter a URL.", "Oops!", 'OK', 'Information')
-                        Return
-                    }
-                    if ($localfiletextBox.text) {
-                        try {
-                            $File = $localfiletextBox.text
-                            Base64
-                        }
-                        catch {
-                            Get-Error
-                        }
-                    }
-                    if ($urltextBox.text) {
-                        try {
-                            $ProgressPreference = 'SilentlyContinue'
-                            $Directory = (New-Object -ComObject Shell.Application).NameSpace('shell:Downloads').Self.Path
-                            $Filename = "Base64.tmp"
-                            $WebClient = New-Object System.Net.WebClient 
-                            $URL = $urltextBox.text
-                            $File = "$Directory\$Filename" 
-                            $WebClient.DownloadFile($URL, $File)
-                            Base64
-                        }
-                        catch {
-                            Get-Error
-                        }
-                    }
-                })
-    
-            $Help_Image = New-Object System.Windows.Forms.Label
-            $IconBase64 = 'iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAYAAADE6YVjAAAAxklEQVRIS8WW0Q2AIAxEZTz/HcKRHMJ/x9NAgkGE3h0Y9JfS1zsK1U3ENy/rWQs79s2hFGaAlTxPbMGKECU5A3tBegARmKt6QL4AlEA3BAFKnrN7KIh1qEznBQgTaLUp2i9B0mSpOghBvjKXEOVwKGA4pNYAqFBJSUsbeye6IEhBtLoZwgJkJX6Dt0wBBAi6jGhWoHVflAxRldwQVg17y/OXmHogS883cy6xqLHzJFbLVMgcdhrzz4xPK1BUyX8ruR1oXiD7LvmhkjZLp5jjAAAAAElFTkSuQmCC'
-            $IconBytes = [Convert]::FromBase64String($IconBase64)
-            $Stream = [System.IO.MemoryStream]::new($IconBytes, 0, $IconBytes.Length)
-            $Custom_Bookmark_Help_Picture = [System.Drawing.Icon]::FromHandle(([System.Drawing.Bitmap]::new($Stream).GetHIcon()))
-            $ResizedImage = $Custom_Bookmark_Help_Picture.ToBitmap().GetThumbnailImage(20, 20, $null, [System.IntPtr]::Zero)
-            $Help_Image.Image = $ResizedImage
-            $Help_Image.Size = New-Object System.Drawing.Size(20, 20)
-            $Help_Image.Location = New-Object System.Drawing.Point(60, 77)
-            $Help_Image.BringToFront()
-            $form.Controls.Add($Help_Image)
-    
-            $Help_Image.Add_Click({
-                    [System.Windows.Forms.MessageBox]::Show("Copy the Base64 code into your clipboard then click the `"From: Base64`" button.", "Help", 'OK', 'Information')
-                })
-    
-            $windowcode = '[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);'
-            $asyncwindow = Add-Type -MemberDefinition $windowcode -Name Win32ShowWindowAsync -Namespace Win32Functions -PassThru
-            $null = $asyncwindow::ShowWindowAsync((Get-Process -PID $pid).MainWindowHandle, 0)
-    
-            $form.Add_Shown({ $form.Activate() })
-            [void]$form.ShowDialog()
+# Add MouseClick event to close the form on right-click
+$pictureBox.Add_MouseClick({
+        param($sender, $e)
+        if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Right) {
+            $form.Close()
         }
     })
 
-$base64Icon = "iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAApklEQVRIS2NkQAPGxsb/0cVI4Z89e5YRWT0Kh1LDYQYjW4LVAnRXEOsDmANHLcAZYlQPIpCB6PGFLkZRJMNc/PHjR447d+78xOY1qlgANfg30Dds6JYQZQEp+YOojIasiBTDycpo5FgAsgjmSIJBNCgtILmoIMUXJEcyvoIOzWLykykuS+iS0WhaVOCqDUmO5NEKBx4CpKR3fMGGMw5Amii1BD1VAQBT08IZ4lLZJwAAAABJRU5ErkJggg=="
-$iconBytes = [Convert]::FromBase64String($base64Icon)
-$iconStream = New-Object System.IO.MemoryStream(, $iconBytes)
-$Icon = [System.Drawing.Image]::FromStream($iconStream)
-$menuItemClose = New-Object System.Windows.Forms.ToolStripMenuItem("Close", $Icon)
-    
-$menuItemClose.Add_Click({
-        $form.Close()
+# Add MouseWheel event to resize the form
+$form.Add_MouseWheel({
+        param($sender, $e)
+
+        # Check if the Ctrl key is pressed
+        if ([System.Windows.Forms.Control]::ModifierKeys -eq [System.Windows.Forms.Keys]::Control) {
+            $change = 20  # Change size by 20 pixels
+
+            # Calculate new width and height based on the scroll direction
+            $newWidth = $form.Width + ($e.Delta / [Math]::Abs($e.Delta)) * $change
+            $newHeight = $form.Height + ($e.Delta / [Math]::Abs($e.Delta)) * $change
+
+            # Ensure the form doesn't get too small
+            $minSize = 100
+            if ($newWidth -lt $minSize) {
+                $newWidth = $minSize
+            }
+            if ($newHeight -lt $minSize) {
+                $newHeight = $minSize
+            }
+
+            # Apply the new size to the form
+            $form.Size = New-Object System.Drawing.Size($newWidth, $newHeight)
+        }
     })
-
-# Add the items to the context menu
-$contextMenu.Items.Add($menuItemBase64)
-$contextMenu.Items.Add($menuItemClose)
-
-# Assign the context menu to the PictureBox
-$pictureBox.ContextMenuStrip = $contextMenu
 
 # Show the Form
 $form.ShowDialog()
