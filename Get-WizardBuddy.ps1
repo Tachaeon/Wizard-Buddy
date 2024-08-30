@@ -139,7 +139,70 @@ $menuItemCustom = New-Object System.Windows.Forms.ToolStripMenuItem("Custom", $I
 $contextMenu.Items.Add($menuItemCustom)
 
 $menuItemCustom.Add_Click({
-        $form.Close()
+        function Get-Error {
+            [System.Windows.Forms.MessageBox]::Show("$($Error[0].Exception.Message)", 'ERROR', 'OK', 'ERROR')
+        }
+        # Load required assemblies
+        Add-Type -AssemblyName System.Windows.Forms
+
+        # Create the form
+        $FileSelectForm = New-Object System.Windows.Forms.Form
+        $FileSelectForm.Text = "Custom Buddy Browser"
+        $FileSelectForm.Width = 400
+        $FileSelectForm.Height = 150
+        $FileSelectForm.TopMost = $true
+        $FileSelectForm.StartPosition = "CenterScreen"
+
+        # Create the text field (TextBox)
+        $localfiletextBox = New-Object System.Windows.Forms.TextBox
+        $localfiletextBox.Width = 260
+        $localfiletextBox.Location = New-Object System.Drawing.Point(10, 20)
+        $FileSelectForm.Controls.Add($localfiletextBox)
+
+        # Create the "Browse" button
+        $browseButton = New-Object System.Windows.Forms.Button
+        $browseButton.Text = "Browse"
+        $browseButton.Location = New-Object System.Drawing.Point(280, 18)
+        $FileSelectForm.Controls.Add($browseButton)
+
+        # Create the "OK" button
+        $okButton = New-Object System.Windows.Forms.Button
+        $okButton.Text = "OK"
+        $okButton.Location = New-Object System.Drawing.Point(160, 60)
+        $FileSelectForm.Controls.Add($okButton)
+
+        # Function to handle the Browse button click event
+        $browseButton.Add_Click({
+                $openFileDialog = New-Object System.Windows.Forms.OpenFileDialog
+                $openFileDialog.InitialDirectory = [Environment]::GetFolderPath('MyDocuments')
+                $openFileDialog.Filter = "All files (*.*)|*.*"
+                if ($openFileDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+                    $localfiletextBox.Text = $openFileDialog.FileName
+                }
+            })
+
+        # Function to handle the OK button click event
+        $okButton.Add_Click({
+                if ([string]::IsNullOrWhiteSpace($localfiletextBox.text)) {
+                    [System.Windows.Forms.MessageBox]::Show("Please select a file or enter a URL.", "Oops!", 'OK', 'Information')
+                    Return
+                }
+                if ($localfiletextBox.text) {
+                    try {
+                        $image = [System.Drawing.Image]::FromFile($localfiletextBox.Text)
+                        $pictureBox.Image = $image
+                        $FileSelectForm.Close()
+                    }
+                    catch {
+                        Get-Error
+                    }
+                }
+            })
+
+        # Show the form
+        $FileSelectForm.Add_Shown({ $FileSelectForm.Activate() })
+        [void]$FileSelectForm.ShowDialog()
+
     })
 
 #Close
@@ -156,3 +219,10 @@ $menuItemClose.Add_Click({
 
 # Show the Form
 $form.ShowDialog()
+
+
+$imagePath = "C:\Path\To\Your\Image.jpg"  # Replace with the path to your image file
+if (Test-Path $imagePath) {
+    $image = [System.Drawing.Image]::FromFile($imagePath)
+    $pictureBox.Image = $image
+}
