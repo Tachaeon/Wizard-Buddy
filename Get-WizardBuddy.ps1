@@ -184,7 +184,7 @@ $menuItemCustom.Add_Click({
         # Function to handle the OK button click event
         $okButton.Add_Click({
                 if ([string]::IsNullOrWhiteSpace($localfiletextBox.text)) {
-                    [System.Windows.Forms.MessageBox]::Show("Please select a file or enter a URL.", "Oops!", 'OK', 'Information')
+                    [System.Windows.Forms.MessageBox]::Show("Please select a file name.", "Oops!", 'OK', 'Information')
                     Return
                 }
                 if ($localfiletextBox.text) {
@@ -202,7 +202,6 @@ $menuItemCustom.Add_Click({
         # Show the form
         $FileSelectForm.Add_Shown({ $FileSelectForm.Activate() })
         [void]$FileSelectForm.ShowDialog()
-
     })
 
 #Close
