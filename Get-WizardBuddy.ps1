@@ -52,10 +52,56 @@ $pictureBox.Image = $loadedImage
 # Add PictureBox to the form
 $form.Controls.Add($pictureBox)
 
+# Set the initial size of the PictureBox to match the original image size
+$pictureBox.Image = $loadedImage
+$pictureBox.Size = $loadedImage.Size
+
+# Set the form size to match the image size
+$form.Size = $loadedImage.Size
+
+# Add PictureBox to the form
+$form.Controls.Add($pictureBox)
+
+# Adjust PictureBox size and location on form resize
+$form.Add_Resize({
+        $pictureBox.Size = $form.ClientSize
+        $pictureBox.Location = New-Object System.Drawing.Point(0, 0)
+    })
+
 # Add MouseDown event to the PictureBox to enable dragging
 $pictureBox.Add_MouseDown({
         [User32]::ReleaseCapture() | Out-Null
         [User32]::SendMessage($form.Handle, $WM_NCLBUTTONDOWN, $HTCAPTION, 0) | Out-Null
+    })
+
+# Add MouseClick event to close the form on right-click
+$pictureBox.Add_MouseClick({
+        param($sender, $e)
+        if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Right) {
+            $form.Close()
+        }
+    })
+
+# Add MouseWheel event to resize the form
+$form.Add_MouseWheel({
+        param($sender, $e)
+
+        $change = 20  # Change size by 20 pixels
+        # Calculate new width and height based on the scroll direction
+        $newWidth = $form.Width + ($e.Delta / [Math]::Abs($e.Delta)) * $change
+        $newHeight = $form.Height + ($e.Delta / [Math]::Abs($e.Delta)) * $change
+
+        # Ensure the form doesn't get too small
+        $minSize = 100
+        if ($newWidth -lt $minSize) {
+            $newWidth = $minSize
+        }
+        if ($newHeight -lt $minSize) {
+            $newHeight = $minSize
+        }
+
+        # Apply the new size to the form
+        $form.Size = New-Object System.Drawing.Size($newWidth, $newHeight)
     })
 
 # Create a ContextMenuStrip
@@ -130,80 +176,6 @@ $menuItemWizard.Add_Click({
 $Separator1 = New-Object System.Windows.Forms.ToolStripSeparator
 $contextmenu.Items.Add($Separator1)
 
-#Custom
-$base64Icon = "iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAYAAADE6YVjAAAAw0lEQVRIS91VOwqAMAy1g5uDx/AS3t47eAwHV0FTsaVq2rwEFFRwKe+TpL7oKvxZGahD6BCIhDiDoC9qiIBD6XsmoeK0w1IX3MhuGqnYTIwGuUgQsxCu9lhtxaB+hO36wQQZidYgjlJrYuncoSY9lTUwrXR0NgotRhOPs2ZB5F3DaF0dRd4/TcTZZi5Y5L36daFhfDQn1rTvW8VSmcbwtLs8caK31SgIWHYLp6nXdsjh49l/f7+5MYuBK90POq7clob4G42dKhr7liSPAAAAAElFTkSuQmCC"
-$iconBytes = [Convert]::FromBase64String($base64Icon)
-$iconStream = New-Object System.IO.MemoryStream(, $iconBytes)
-$Icon = [System.Drawing.Image]::FromStream($iconStream)
-$menuItemCustom = New-Object System.Windows.Forms.ToolStripMenuItem("Custom", $Icon)
-$contextMenu.Items.Add($menuItemCustom)
-
-$menuItemCustom.Add_Click({
-        function Get-Error {
-            [System.Windows.Forms.MessageBox]::Show("$($Error[0].Exception.Message)", 'ERROR', 'OK', 'ERROR')
-        }
-        # Load required assemblies
-        Add-Type -AssemblyName System.Windows.Forms
-
-        # Create the form
-        $FileSelectForm = New-Object System.Windows.Forms.Form
-        $FileSelectForm.Text = "Custom Buddy Browser"
-        $FileSelectForm.Width = 400
-        $FileSelectForm.Height = 150
-        $FileSelectForm.TopMost = $true
-        $FileSelectForm.StartPosition = "CenterScreen"
-
-        # Create the text field (TextBox)
-        $localfiletextBox = New-Object System.Windows.Forms.TextBox
-        $localfiletextBox.Width = 260
-        $localfiletextBox.Location = New-Object System.Drawing.Point(10, 20)
-        $FileSelectForm.Controls.Add($localfiletextBox)
-
-        # Create the "Browse" button
-        $browseButton = New-Object System.Windows.Forms.Button
-        $browseButton.Text = "Browse"
-        $browseButton.Location = New-Object System.Drawing.Point(280, 18)
-        $FileSelectForm.Controls.Add($browseButton)
-
-        # Create the "OK" button
-        $okButton = New-Object System.Windows.Forms.Button
-        $okButton.Text = "OK"
-        $okButton.Location = New-Object System.Drawing.Point(160, 60)
-        $FileSelectForm.Controls.Add($okButton)
-
-        # Function to handle the Browse button click event
-        $browseButton.Add_Click({
-                $openFileDialog = New-Object System.Windows.Forms.OpenFileDialog
-                $openFileDialog.InitialDirectory = [Environment]::GetFolderPath('MyDocuments')
-                $openFileDialog.Filter = "All files (*.*)|*.*"
-                if ($openFileDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-                    $localfiletextBox.Text = $openFileDialog.FileName
-                }
-            })
-
-        # Function to handle the OK button click event
-        $okButton.Add_Click({
-                if ([string]::IsNullOrWhiteSpace($localfiletextBox.text)) {
-                    [System.Windows.Forms.MessageBox]::Show("Please select a file name.", "Oops!", 'OK', 'Information')
-                    Return
-                }
-                if ($localfiletextBox.text) {
-                    try {
-                        $image = [System.Drawing.Image]::FromFile($localfiletextBox.Text)
-                        $pictureBox.Image = $image
-                        $FileSelectForm.Close()
-                    }
-                    catch {
-                        Get-Error
-                    }
-                }
-            })
-
-        # Show the form
-        $FileSelectForm.Add_Shown({ $FileSelectForm.Activate() })
-        [void]$FileSelectForm.ShowDialog()
-    })
-
 #Close
 $base64Icon = "iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAApklEQVRIS2NkQAPGxsb/0cVI4Z89e5YRWT0Kh1LDYQYjW4LVAnRXEOsDmANHLcAZYlQPIpCB6PGFLkZRJMNc/PHjR447d+78xOY1qlgANfg30Dds6JYQZQEp+YOojIasiBTDycpo5FgAsgjmSIJBNCgtILmoIMUXJEcyvoIOzWLykykuS+iS0WhaVOCqDUmO5NEKBx4CpKR3fMGGMw5Amii1BD1VAQBT08IZ4lLZJwAAAABJRU5ErkJggg=="
 $iconBytes = [Convert]::FromBase64String($base64Icon)
@@ -216,12 +188,41 @@ $menuItemClose.Add_Click({
         $form.Close()
     })
 
-# Show the Form
+# Enable drag-and-drop on the form
+$form.AllowDrop = $true
+
+# Define drag enter event (changes the mouse cursor when dragging a file over the form)
+$form.Add_DragEnter({
+        # Check if the data being dragged is a file
+        if ($_.Data.GetDataPresent([Windows.Forms.DataFormats]::FileDrop)) {
+            # Set the effect to 'Copy' indicating a file can be dropped
+            $_.Effect = [Windows.Forms.DragDropEffects]::Copy
+        }
+        else {
+            $_.Effect = [Windows.Forms.DragDropEffects]::None
+        }
+    })
+
+# Define drag drop event (handles the file drop)
+$form.Add_DragDrop({
+        # Get the file(s) dropped
+        $files = $_.Data.GetData([Windows.Forms.DataFormats]::FileDrop)
+    
+        # Ensure we have files and check the first one is an image
+        if ($files.Count -gt 0 -and ($files[0] -match '\.(jpg|jpeg|png|bmp|gif)$')) {
+            # Load the image from the file into the PictureBox
+            try {
+                $image = [System.Drawing.Image]::FromFile($files[0])
+                $pictureBox.Image = $image
+            }
+            catch {
+                [System.Windows.Forms.MessageBox]::Show("The file could not be loaded as an image.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+            }
+        }
+        else {
+            [System.Windows.Forms.MessageBox]::Show("Please drop a valid image file (jpg, jpeg, png, bmp, gif).", "Invalid File", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+        }
+    })
+
+# Show the form
 $form.ShowDialog()
-
-
-$imagePath = "C:\Path\To\Your\Image.jpg"  # Replace with the path to your image file
-if (Test-Path $imagePath) {
-    $image = [System.Drawing.Image]::FromFile($imagePath)
-    $pictureBox.Image = $image
-}
