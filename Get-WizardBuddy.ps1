@@ -34,6 +34,7 @@ $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = 'None'  # Remove the border
 $form.BackColor = [System.Drawing.Color]::DimGray  # Set the form's background color
 $form.TransparencyKey = $form.BackColor  # Make the background color transparent
+$form.AllowDrop = $true
 
 # Create PictureBox to hold the GIF
 $pictureBox = New-Object System.Windows.Forms.PictureBox
@@ -72,14 +73,6 @@ $form.Add_Resize({
 $pictureBox.Add_MouseDown({
         [User32]::ReleaseCapture() | Out-Null
         [User32]::SendMessage($form.Handle, $WM_NCLBUTTONDOWN, $HTCAPTION, 0) | Out-Null
-    })
-
-# Add MouseClick event to close the form on right-click
-$pictureBox.Add_MouseClick({
-        param($sender, $e)
-        if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Right) {
-            $form.Close()
-        }
     })
 
 # Add MouseWheel event to resize the form
@@ -187,9 +180,6 @@ $contextMenu.Items.Add($menuItemClose)
 $menuItemClose.Add_Click({
         $form.Close()
     })
-
-# Enable drag-and-drop on the form
-$form.AllowDrop = $true
 
 # Define drag enter event (changes the mouse cursor when dragging a file over the form)
 $form.Add_DragEnter({
