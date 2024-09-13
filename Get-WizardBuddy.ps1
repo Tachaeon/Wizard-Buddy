@@ -27,7 +27,7 @@ $ims.Write($IconBytes, 0, $IconBytes.Length)
 # Create the form
 $form = New-Object System.Windows.Forms.Form
 $form.Text = ""
-$form.Size = New-Object System.Drawing.Size(148, 178)
+#$form.Size = New-Object System.Drawing.Size(148, 178)
 $form.Icon = [System.Drawing.Icon]::FromHandle((New-Object System.Drawing.Bitmap -Argument $ims).GetHIcon())
 $form.TopMost = $true
 $form.StartPosition = "CenterScreen"
@@ -40,7 +40,7 @@ $form.AllowDrop = $true
 $pictureBox = New-Object System.Windows.Forms.PictureBox
 $pictureBox.SizeMode = "StretchImage"
 $pictureBox.Dock = "None"
-$pictureBox.Size = New-Object System.Drawing.Size(128, 128)
+#$pictureBox.Size = New-Object System.Drawing.Size(128, 128)
 $pictureBox.BackColor = [System.Drawing.Color]::Transparent
 
 # Base64 encoded GIF
