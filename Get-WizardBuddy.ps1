@@ -181,36 +181,108 @@ $menuItemClose.Add_Click({
         $form.Close()
     })
 
-# Define drag enter event (changes the mouse cursor when dragging a file over the form)
+# Function to download image from a URL (supports GIFs)
+function Download-ImageFromURL {
+    param (
+        [string]$url
+    )
+    try {
+        # Use WebClient to download the image as a byte array
+        $webClient = New-Object System.Net.WebClient
+        $imageBytes = $webClient.DownloadData($url)
+
+        # Create a memory stream to hold the image bytes
+        $memoryStream = New-Object System.IO.MemoryStream(, $imageBytes)
+
+        # Load the image from the memory stream
+        $image = [System.Drawing.Image]::FromStream($memoryStream)
+
+        # Return the image
+        return $image
+    }
+    catch {
+        # Show a message box if the URL cannot be fetched or loaded
+        [System.Windows.Forms.MessageBox]::Show("Failed to load the image from the URL.", "Invalid URL", 
+            [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        return $null
+    }
+}
+
+# Function to handle GIFs specifically
+function Load-GifFromURL {
+    param (
+        [string]$url
+    )
+    try {
+        # Download the image using WebClient
+        $webClient = New-Object System.Net.WebClient
+        $imageBytes = $webClient.DownloadData($url)
+
+        # Create a memory stream and pass the image bytes to the PictureBox directly
+        $memoryStream = New-Object System.IO.MemoryStream(, $imageBytes)
+
+        # Set the PictureBox Image property directly for GIF handling
+        $pictureBox.Image = [System.Drawing.Image]::FromStream($memoryStream)
+    }
+    catch {
+        # Show a message box if there is an issue
+        [System.Windows.Forms.MessageBox]::Show("Failed to load the GIF from the URL.", "Invalid GIF URL", 
+            [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+    }
+}
+
+# Handle the DragEnter event to check if the dragged data is a file or URL
 $form.Add_DragEnter({
-        # Check if the data being dragged is a file
-        if ($_.Data.GetDataPresent([Windows.Forms.DataFormats]::FileDrop)) {
-            # Set the effect to 'Copy' indicating a file can be dropped
-            $_.Effect = [Windows.Forms.DragDropEffects]::Copy
-        }
-        else {
-            $_.Effect = [Windows.Forms.DragDropEffects]::None
+        param($sender, $e)
+        # Check if the data being dragged is a file or a URL
+        if ($e.Data.GetDataPresent([Windows.Forms.DataFormats]::FileDrop) -or 
+            $e.Data.GetDataPresent([Windows.Forms.DataFormats]::Html) -or 
+            $e.Data.GetDataPresent([Windows.Forms.DataFormats]::Text)) {
+            $e.Effect = [System.Windows.Forms.DragDropEffects]::Copy
         }
     })
 
-# Define drag drop event (handles the file drop)
+# Handle the DragDrop event to load the image when a file or URL is dropped
 $form.Add_DragDrop({
-        # Get the file(s) dropped
-        $files = $_.Data.GetData([Windows.Forms.DataFormats]::FileDrop)
-    
-        # Ensure we have files and check the first one is an image
-        if ($files.Count -gt 0 -and ($files[0] -match '\.(jpg|jpeg|png|bmp|gif)$')) {
-            # Load the image from the file into the PictureBox
+        param($sender, $e)
+
+        # Check if a file has been dragged
+        if ($e.Data.GetDataPresent([Windows.Forms.DataFormats]::FileDrop)) {
+            $files = $e.Data.GetData([Windows.Forms.DataFormats]::FileDrop)
+            $filePath = $files[0]  # Load only the first file
             try {
-                $image = [System.Drawing.Image]::FromFile($files[0])
+                # Check if the file is a valid image file by attempting to load it
+                $image = [System.Drawing.Image]::FromFile($filePath)
+                # Display the image in the PictureBox
                 $pictureBox.Image = $image
             }
             catch {
-                [System.Windows.Forms.MessageBox]::Show("The file could not be loaded as an image.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+                [System.Windows.Forms.MessageBox]::Show("Please drop a valid image file.", "Invalid File", 
+                    [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
             }
         }
-        else {
-            [System.Windows.Forms.MessageBox]::Show("Please drop a valid image file (jpg, jpeg, png, bmp, gif).", "Invalid File", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+        # Check if a URL or HTML content has been dragged
+        elseif ($e.Data.GetDataPresent([Windows.Forms.DataFormats]::Html) -or $e.Data.GetDataPresent([Windows.Forms.DataFormats]::Text)) {
+            # Get the text or URL from the drag data
+            $textData = $e.Data.GetData([Windows.Forms.DataFormats]::Text)
+        
+            # Basic check if the dragged text looks like a URL for images (including gifs)
+            if ($textData -match "^https?://.*\.(jpg|jpeg|png)$") {
+                # Handle regular images (jpg, png, etc.)
+                $image = Download-ImageFromURL -url $textData
+                if ($image -ne $null) {
+                    # Display the downloaded image in the PictureBox
+                    $pictureBox.Image = $image
+                }
+            }
+            elseif ($textData -match "^https?://.*\.(gif)$") {
+                # Handle GIFs explicitly
+                Load-GifFromURL -url $textData
+            }
+            else {
+                [System.Windows.Forms.MessageBox]::Show("Please drop a valid image URL.", "Invalid URL", 
+                    [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+            }
         }
     })
 
