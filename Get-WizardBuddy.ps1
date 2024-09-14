@@ -76,25 +76,38 @@ $pictureBox.Add_MouseDown({
     })
 
 # Add MouseWheel event to resize the form
+# Modify MouseWheel event to handle form resizing and opacity adjustment when holding 'Ctrl'
 $form.Add_MouseWheel({
         param($sender, $e)
 
-        $change = 20  # Change size by 20 pixels
-        # Calculate new width and height based on the scroll direction
-        $newWidth = $form.Width + ($e.Delta / [Math]::Abs($e.Delta)) * $change
-        $newHeight = $form.Height + ($e.Delta / [Math]::Abs($e.Delta)) * $change
+        # Check if the 'Ctrl' key is being held down
+        if ([System.Windows.Forms.Control]::ModifierKeys -eq [System.Windows.Forms.Keys]::Control) {
+            # Adjust the form's opacity (opacity is a value between 0.0 and 1.0)
+            $change = 0.05  # Change opacity by 5%
+            $newOpacity = $form.Opacity + ($e.Delta / [Math]::Abs($e.Delta)) * $change
 
-        # Ensure the form doesn't get too small
-        $minSize = 100
-        if ($newWidth -lt $minSize) {
-            $newWidth = $minSize
-        }
-        if ($newHeight -lt $minSize) {
-            $newHeight = $minSize
-        }
+            # Ensure opacity is within valid bounds (0.1 to 1.0)
+            if ($newOpacity -lt 0.1) { $newOpacity = 0.1 }
+            if ($newOpacity -gt 1.0) { $newOpacity = 1.0 }
 
-        # Apply the new size to the form
-        $form.Size = New-Object System.Drawing.Size($newWidth, $newHeight)
+            # Apply the new opacity to the form
+            $form.Opacity = $newOpacity
+        }
+        else {
+            # Normal resizing when 'Ctrl' is not pressed
+            $change = 20  # Change size by 20 pixels per scroll
+            $newWidth = $form.ClientSize.Width + ($e.Delta / [Math]::Abs($e.Delta)) * $change
+            $newHeight = $form.ClientSize.Height + ($e.Delta / [Math]::Abs($e.Delta)) * $change
+
+            # Enforce minimum size to avoid shrinking too small
+            $minSize = [System.Drawing.Size]::new(100, 100)
+            if ($newWidth -lt $minSize.Width) { $newWidth = $minSize.Width }
+            if ($newHeight -lt $minSize.Height) { $newHeight = $minSize.Height }
+
+            # Resize both form and PictureBox based on new dimensions
+            $form.ClientSize = [System.Drawing.Size]::new($newWidth, $newHeight)
+            $pictureBox.Size = [System.Drawing.Size]::new($newWidth, $newHeight)
+        }
     })
 
 # Create a ContextMenuStrip
