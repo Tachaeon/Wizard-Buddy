@@ -6,6 +6,26 @@ $Version = "2.0"
 [void] [System.Reflection.Assembly]::LoadWithPartialName("WindowsFormsIntegration") 
 
 #region Functions
+function Install-Application {
+    param (
+        [string]$AppID,
+        [string]$PostInstallPath = $null
+    )
+    WingetCheck  # Ensure Winget is available before proceeding
+
+    $startParams = @{
+        FilePath     = 'powershell.exe'
+        ArgumentList = '-Command', "winget install --id=$AppID -h -e --accept-package-agreements --accept-source-agreements"
+        PassThru     = $true
+    }
+        
+    Start-Process -Wait @startParams  # Ensures the installation completes before proceeding
+        
+    if ($PostInstallPath) {
+        Start-Process $PostInstallPath
+    }
+}
+
 function WingetCheck {
     $Filename = "C:\Install"
     If (!(Test-Path -Path $FileName)) {
@@ -200,9 +220,28 @@ $Stream = [System.IO.MemoryStream]::new($IconBytes, 0, $IconBytes.Length)
 $Systray_Tool_Icon.Icon = [System.Drawing.Icon]::FromHandle(([System.Drawing.Bitmap]::new($Stream).GetHIcon()))
 $Systray_Tool_Icon.Visible = $true
 
+$Menu_Help = $contextmenu.Items.Add("Help")
+$HelpIconBase64 = 'iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAMAAAC6V+0/AAAAWlBMVEVHcEwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACNqrUmAAAAHnRSTlMACgES3BvOfSGNBafFs7ufMdUpdeJWaoGY/Odfbz7oc/NRAAAA1ElEQVQY011QWRbCIAwEyr5vbWmt97+mBLT65APCZCaZBKHPIQT9HflQxqiV/UCLoNS15mja8E1z9GJdrKWoYXnzvI3wAOmZwuTuKUMFbkH7rBtgmT4gc5zncUHAodvFe5klnTFWi4Gzdnsm9AxWAsXTd1B71b9eDOso8wPqoGBuEGlzlDFTM6TL2wRFG2a063JU+PTL5JwEGqFY4UbY2ZEsCSwRxeWQK5BHWqbOevlZXeTuPXy2fB0h26i7t8dU5WHfQ6Ji+S6U5GK8D5v82z3B+o5f19gJKhplsbIAAAAASUVORK5CYII='
+$Menu_Help.Image = Get-IconFromBase64 $HelpIconBase64
+
+$Menu_Help.add_Click({
+        [System.Windows.Forms.MessageBox]::Show("Mouse Scroll Wheel Up: Increase Buddy Size`nMouse Scroll Wheel Down: Decrease Buddy Size`n`nDrag .gif file onto Buddy: Changes Buddy to selected .gif`nDrag .gif from website onto Buddy: Changes Buddy to selected .gif", "Wizard Buddy Help", 'OK', 'Information')
+    })
+
+#Separator
+$Separator3 = New-Object System.Windows.Forms.ToolStripSeparator
+$contextmenu.Items.Add($Separator3)
+
 $Menu_Exit = $contextmenu.Items.Add("Exit")
 $ExitIconBase64 = 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAApklEQVRIS2NkQAPGxsb/0cVI4Z89e5YRWT0Kh1LDYQYjW4LVAnRXEOsDmANHLcAZYlQPIpCB6PGFLkZRJMNc/PHjR447d+78xOY1qlgANfg30Dds6JYQZQEp+YOojIasiBTDycpo5FgAsgjmSIJBNCgtILmoIMUXJEcyvoIOzWLykykuS+iS0WhaVOCqDUmO5NEKBx4CpKR3fMGGMw5Amii1BD1VAQBT08IZ4lLZJwAAAABJRU5ErkJggg=='
 $Menu_Exit.Image = Get-IconFromBase64 $ExitIconBase64
+
+$Menu_Exit.add_Click({
+        $Systray_Tool_Icon.Visible = $false
+        $window.Close()
+        # $window_Config.Close() 
+        Stop-Process $pid -ErrorAction 'SilentlyContinue'
+    })
 
 $Systray_Tool_Icon.Add_Click({
         if ($_.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
@@ -585,7 +624,7 @@ $Systray_Tool_Icon.Add_Click({
             #Region Customize Windows
             $CustomizeWindowsMenu = Add-MenuItem -Menu $ContextMenu -Text "Customize Windows" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAAh0lEQVRIS2P84afzn4FIwPj/n05dNjcDIxPDFSK1MDCOWkAoqEaDiFAIjaYigiFEhyD66aulTdgdEBVsf37dyctlYOBiElQhVg8jw4LnRFvAICZx5z+DFwMD0xsSLFj4iujCjuH/X53/En5AxzMSX9gxjFpAILYZR4OIUH4YDSJCIcRA8yACAEAenUVOCa2cAAAAAElFTkSuQmCC'
             
-            $AlloftheBelow = Add-SubMenuItem -ParentMenuItem $CustomizeWindowsMenu -Text "All of the Below" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAACLUlEQVRIS2NkIAz+oylhJKwFoQKfYlagsl8gpYcu3ILrsDNQg7GJsghZEbpLUQxGdzWSRchSGJbCBf4fCvjPaLeBFN/D1b7a6Msg5r8ZxCdswdevX4myBFnd573xDMqR24m3gJubG8USbJbiseAZULMURkTBggik0a+pmEHZ1pThzJL1DCYxgQz9jhEM6JaCDHj16hXYHJAP7PIO/Hz6+jt7z+xlDCWpUXDfYMQBzIK9nTPAmtO2zAVbgA7QfcDNxXRZwn+rLkhd29T5DFXZiWCzcVoA8gEMEGMBNA4YTj56zmAuJ4nfBzIyMgzv378Hm8/Kysrw4cMHvD4QExNj+NPQxsDSUIUR9Fh9QEwyQg6i6eHRDPX7d8MsCQXqX4M3kmU0VBhCp7eA1fz5+YthskccTh+AXP+qvIZBiJML5gOUvIA3Dmb5JMMj2cvLi+HgwYNwi0ApCF/Q4PUBKJmCUlEY0BcCspIYyRQUPCAMsgDsS0T4E5eTQWneMiUcrPnqln0Mz+8+wAgikBqQwbffvmHQnNzH8Gar73kR781G6ArJiuTJkyczlPz4Bw7zHHNLhsICAeoWFbBcDQuau8s9SbMAVlRgy2iwoIGleVBkk1zYwSIZZAF6UcHePREcNCDXv8tKAbuBLAsktdUYuIT4wQbAigr0oEEu7KhSXIMsqOmextBSmgUvScnyAa6ioqZrCkN/Yzk4D5Bd4RBTDqGrIarKBGrCqPTJsAwjJwMACUV1KINxfhoAAAAASUVORK5CYII='
+            $AlloftheBelow = Add-SubMenuItem -ParentMenuItem $CustomizeWindowsMenu -Text "All of the Below" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAAMgAAADICAYAAACtWK6eAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAALEwAACxMBAJqcGAAAC2pJREFUeJzt3WuMXWUVxvF/WygthdJCuVWgBcodhVZBbqGBcjGESkKqGAVNWoJEaVDggyYqMWKIJgZUSOQSQVJMBEODgAkgFAHbAIWWFqH0BtiCBUqBobTM9OaHNWOGztCZOXu9e+293+eXPJmEkNN13lnvOWfP2XttEBEREREREZFKGJTgMQ8Cfg6cDEzo/G+bgI5uP9uBNmAd8H63rAXeBFZ1ZnXn/ysSwnuDnA78HRjh+JjvAiuBV4Al3bIC2Oz474j04LlB9sCaeH/Hx9yRdmAx8DwwvzMvoU0jFfVtYFtwNgJPAdcBZwG7Jn3GIgNwC/EbZPt0AP8CfoEdEw1O9uxF+nAb8Ruir7wD/An4GjAyzTKI9G4m8RtgoO8uDwEXA7slWA+RT9kPWE9847eSDcBfgWnALt4LI9JlGvHNXjTvATcCxzivjQgAk4GFxDe6R+YB09Ffw8TZIOBM4C7gY+Ib3eNd5XpgrOciiYAdAM/AvtCLbvSi6QBmAZNcV0ik00lYg3UQ3+xF8yhwmu/yiJgDgN8AHxHf6EXzGHYOmoi7UcBPsTN5oxu9aOZg39aLuBuFnQ7SRnyjF829wKG+yyNixgC/w64biW70IukAfgvs5bs8IuZw4H7iG71o3geuQCdJSiLnAsuIb/SimQ+c4Lw2IoCdG3Utdq1HdKMXyRbgD8Bo3+URMUcAc4lv9KL5L3CB89qIAPZZ/mrs7NvoRi+aWejdRBI5ElhAfJMXzVvAVOe1EQHs2OQGYCvxjV40twDDfZdHxJyHnW0b3eRFsxg42nltRAAYTzPOFt4AXOa7NCJmGPBH4pvcI3ejj1ySyDXYdw7RTV40C7B3RhF359OMEx/XAlOc10YEgInAGuKbvGg2Az9wXhsRAA4BlhPf5B65CRjiuzwisA/N+FJxG/A3NGFFEhgNPEd8g3vkWWBf3+URsdszzCO+wT2yAjjYd3lEYHfgGeIb3COrsXPSRFyNBl4kvsE98g5wvO/yiNiB+xLiG9wj76NpKpLAOOx08+gG98iHwIm+yyNiH0+a8I171zvJRN/lEYFzqP+Yoa68Cxzruzwi9bs71o6yBhubJOKqDvdY7G9ew+74JeJmKPA08c3tlRew731E3HwO+24hurm98giws+sKSfbOphkXXHXlLt/lyYtOn+5pJbYuk6MLcXIcNkz76ehCpDl2ojknNm7D3hHPd10hyd4EmnEHrK60obFC4uxS4hvbM8vQuFNx9gjxje2ZB7DbdIu4GA+sJ76xPXON5wKJXEl8U3tmEzpFXhwNxr6Zjm5sz7wB7Om5SJK3U2jGJPnuuc91hRpIXxT23ypsztZx0YU4Ogo7sfHF6EKkGfajeQfsHwAHei5Sk+gdZGDWY1PkJ0cX4mgY8HnslnAihe0GvE38K793vu+5SJK3K4hvaO98BBzguUiSr12wwW3RTe2d2Z6L1AQ6BmnNFuwU8vOiC3F2JLAQeDW6EKm/pr6L/Ac7zhL0DlLEFmz9zo4uxNke2PX5j0YXIvU3EptqGP2q75124FDHdaotvYMU0w7sTfNO/BuC/UXrnuhCpP4Owu4jGP2qnyKnO66TZOwB4ps5ReaT+cVV+ojlow34ZnQRCYzFbhPxUnQhUm+DsbNio1/xU2QJGb+QZvvEnW3DLj6aHF1IAmOwW2kvii5E6m0C8a/2qbIcmxUmUshc4ps5VWY4rpNk6nvEN3KqLMOOtURatj/Nu269ey70WyrJVZM/Zs1zXKda0FumvyZPCjkJOC26CKm3w4h/pU+Z+/2WSnK1gvhGTpUtwMF+S1Vt+qIwjSOBE6KLSGQQsBF4LLoQqa8LiH+lT5k16N6HUsAomnWfw97ydbfVqjD9FSuND2j+GbCXRxdQBm2QdJp+08wzsHunNJo2SDpPRRdQgiZeAyMlafLZvV35t9tqSXYGYcci0U2cOsd7LVgV6SNWOtuwu1I13beiC0hJGyStHDbIRdEFpKQNktaS6AJKcCAwMbqIVLRB0noluoCSXBBdQCraIGlpg9Rc1kPBSrIW2Cu6iBKMwybDN4reQdJrXNN8hqnRBaSgDZJeLhvkrOgCUtAGSS+XDTKZBvZT455QBa2KLqAko4FJ0UV40wZJb210ASU6M7oAb9og6eW0QaZEF+BNGyS9nDbIyTSspxr1ZCpqXXQBJdodOCq6CE/aIOltiC6gZCdGF+BJGyS93DbIl6ML8KQNkp42SI3leFOUcdjJdYcBw4NraaJjgdtL+rc2Akuxcai5fCGbzHDgZpo/ryrHbAZ+DwxDWjIUeIL4X6SSNv/AeeJjLrN5f0nDr50WAA7p/DnH6wFzuB5kNPAmOt7IxcfY/d3bPB4sh79inYs2R05G4HjKSw4b5LDoAqR0h3s9UA4bZEt0AVK6rV4PlMMGafqUdelpsdcD5XCQPhz7EmlMdCFSijXY1Pl2jwfL4c+8m7EZuY0cKiA9zASejy6iju4l/ossJW3+jLMcPmJ1GQnMR3/Vaqol2I1T13s+aA4H6V3agGnAJ9GFiLsN2O/WdXNAHscg3b2NHcR9NboQcXUpdh6WOLmT+M/Lik9uI6GcjkG62xV4Brt2QeprITYoItnH5lw3CMARwHPYoAGpnzbgi8DylP9ITgfp23sVuCy6CGnZdBJvDjE3E/85WhlYbuz1NylJDMU+akX/0pX+ZR7OVw3uSM7HIN2Nx264OTq4Dtmx97D7IZY2EDznY5DuXge+g71CSTVtAy6m5Gn5uX1RuCNLsavRTo0uRHp1PXBrdBG52wl4kvjP2cqnM4egF3Mdg/Q0FlgA7BNdiAB2atDEzp9SEVPQgLkqZDN2a7cwOgbp3WudP88IrUJ+AsyKLkJ6Nxh4mPhX0VzzEDoEqLy9gdXEN0tueQPYsx+/H6mAU4FNxDdNLumgQrdQ0DFI31ZhV6ydE11IJq4C7osuQgZuNvGvrk3Pvf3+bUjljAJWEN9ETc1SbLCG1Ngk7Oq16GZqWjYCxw3g9yAVdjnxDdW0zBjQb0Aq727im6opuXNgSy91MAJ4mfjmqnsWYwM0pIGOxu5mFN1kdc1H2OAMabBLiG+0uuYbLay31NCtxDdb3XJzSysttTQMu549uunqkuewQRmSkUOxe5BEN1/Vsw4bkCEZupD4BqxytqKbGGXvBuIbsar5dYF1lYbYGZhLfDNWLU9iAzFEOBBYS3xTViVvY4MwRP7vK9hn7ujmjM4WbACGSA/XEd+g0bm28CpKYw0BHie+SaPyCBptK33YF3iL+GYtO6uxgRcifZqMDUCLbtqysgnNN5YB+hHxjVtWrnZaM8nIIOBB4ps3dWZ7LZjkZ0/sPiTRTZwqK7HBFiItOxFoJ76ZvfMJNtBCpLCZxDe0dy53XSHJ3l+Ib2qv3O28NiLsjg1Ki27uonkZG2Ah4u4L2Mzf6CZvNR8Dx7ivikg304lv9FZzSYL1EOnhDuKbfaDR3WalNMOBRcQ3fX/zAjaoQqQ0hwNtxDd/X/kQG1AhUrqLiN8AfeXCZM9epB9uIn4TfFZuSPi8RfplKPAs8Zth+8zFBlKIhBuPDViL3hRdWYsNohCpjKlUY+jDVmwAhUjl/Ir4DXJd8mcp0qKdsIFrUZvjcXSbcKm4sdjgtbI3x1vYwAmRypuCDWAra3NsxgZNiNTGzyhvg/y4pOck4mYw8DDpN8eD2IAJkdoZA6wi3eZ4HRssIVJbp2CD2bw3Rzs2UEKk9q7Cf4PMLPUZiCQ2G7/NcU/JtYsktwewguKbYykwsuTaRUoxCRvY1urm2IANjhBprO/S+gaZHlCvSOlmMfDNcUdIpSIBRmAD3Pq7ORZhgyJEsnEU8AF9b4512IAIkex8CXiDz94cK4GJYdWJVMAI4IfAP7HT5NcATwBXoo9VIiIiIiIiIlJn/wMZOnzOpfs7ZAAAAABJRU5ErkJggg=='
             $AlloftheBelow.add_Click({
                     Set-ItemProperty -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name 'AppsUseLightTheme' -Value 0 -Type Dword -Force
                     Set-ItemProperty -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name 'SystemUsesLightTheme' -Value 0 -Type Dword -Force
@@ -595,6 +634,8 @@ $Systray_Tool_Icon.Add_Click({
                     New-Item -Path 'HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32' -Value "" -Force
                     New-Item -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel' -Name '{645FF040-5081-101B-9F08-00AA002F954E}' -Value 1 -Force
                     Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'Hidden' -Value 1 -Force
+                    Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowTaskViewButton" -Value 0
+                    Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "MMTaskbarMode" -Value 2
                     $Path = "HKLM:\\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Icons"
                     If (!(Test-Path($Path))) {
                         New-Item $Path -Force | New-ItemProperty -Name '29' -Value '%windir%\System32\shell32.dll,-50' -Type String -Force | Out-Null
@@ -606,7 +647,8 @@ $Systray_Tool_Icon.Add_Click({
                     Stop-Process -Id $explorer.id -Force
                 })
 
-            $DarkMode = Add-SubMenuItem -ParentMenuItem $CustomizeWindowsMenu -Text "Dark Mode" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAAx0lEQVRIS2NkoDFgpLH5DIPKAg+gb7cDMUmOIkbxf6Rg/AJk85ISrPgsQDYYZiYxDkKxH5cGqhgOsmlALMDmenyOwRsl2HxAUwtcgM7ZjcNJJEcwNm/jcj3VUhEhCwjFxWOgAhnkxIPubXeg5A4iMhK+uEsC6p+Pz8vE+AKfG1AsJyUVEeExsBKCFoAUkesLDAeTkpOJ8QHRFpDjC6yOJSbzEAouvGYQYwEsaMKBjBVQTiyQXkJWmBGjiRQ1pPiAFHPhamluAQCIgBcZ9HL6dgAAAABJRU5ErkJggg==' -AddSeparator
+            $SettingsIcon = "iVBORw0KGgoAAAANSUhEUgAAABQAAAATCAMAAACnUt2HAAABHVBMVEVHcExzfoZve4R7hY1pdX50fod3gYpodH1qdX9pdH6AiZFncnyAiZGBipJ3gYpxfIWAipJteIJteIF3gYp9ho9odH5xfIV4got/iJF9ho9rd4Boc31mcnxwe4Vrd4B+h4+BipJpdH5/iJCAiZFpdX5/iJGBipJ/iJFueYJ8hY5weoRueYN6hIxmcnyBipJ9ho5/iJByfYZ2gIl0f4dpdX55g4xsd4Boc30LW6UMV5/J0NMMUpeBipIKYa1veYOjq7DEy8/w8/W6wcW6ydWJk5qDjZWQmaBglMCtvMgxd7VyoMbS2NsdbLHG093f5uyxuL3Z3d+Wn6bn7PBIfrKBi5O/xMinwtjU2duas8uGpcNGea1/ocNZhLGrsreRstAKJ6PYAAAAL3RSTlMACvHbNAPtaPjdL+1465GiylEPxDlI1UMd8ibNorTEW48a7kyJiSJVdBrmP3p94RYJLGEAAAEcSURBVBjTTdB3U8IwAAXwtKXQQsuUIYIM94SOpJO2Uobs5Vb8/h/DpBc93z/v3u8uuVwAwKk0ZYl0Q26eA5pk1nVlKZmU7l03e0LxokvSbkd1RrHCdf5yeEDxCqM78v3N8B82IBys7CC0+yMIb4nwTJmDT317OpmMw2AAuTIDQLoQV1V/Nu71TGu3WEE1XkgDTCp8Duc907SsN7ur4Q00HGi/ROa8r4dkAwVHCxZzYs7jawdPFmTqJcXzt1PTcZyvZR9TKQN4vlr3oL393n18LtdD7zqXZ8irbljUDR5wZgPkXdLHM8cIKaP9fqMixMYo5jHquqHrOkJCjmICT10QRYH0KcXYkWGkEq1WEbdY/P3lai11Fx1J1aIrfwDaazWE1OQ3kQAAAABJRU5ErkJggg=="
+            $DarkMode = Add-SubMenuItem -ParentMenuItem $CustomizeWindowsMenu -Text "Dark Mode" -IconBase64 $SettingsIcon -AddSeparator
             $DarkMode.add_Click({
                     Set-ItemProperty -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name 'AppsUseLightTheme' -Value 0 -Type Dword -Force
                     Set-ItemProperty -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name 'SystemUsesLightTheme' -Value 0 -Type Dword -Force
@@ -614,30 +656,45 @@ $Systray_Tool_Icon.Add_Click({
                     Stop-Process -Id $explorer.id -Force
                 })
 
-            $OldContextMenu = Add-SubMenuItem -ParentMenuItem $CustomizeWindowsMenu -Text "Old Context Menu" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAABaElEQVRIS2NkQAW+QO4mNDFyuYwgjWACCfx/0WNBroEMr7/9BOvVrTsPNxvZgv8g0QG3YNrB5wxZ9pJYfUnIByBNBINIvPg4AyMjI1afErLgI9ACPlxBJFFyAsPV6GoJWYAzDkCGP3r0CG7B8+fPweyEhASGR/duMtxtNQPzCVmANYjQDYfZArMkOzubYUsEC/kWfPZfzMDOzo41UmGWmJubg+OEkA8wggiX69F9QZYFS0++YihefQ9s1o1rVxg0tHQIZsDLTYZ4MxpKHPwH+keyFDPl4LOFJAsIOheLApLjgFRLSLYAW+Ya1EGEkdFAPrBV5WdYna7JAGLDigZcbJKDaPe19ww1Gx8ynKw0AFsAK85B7OfAjAUq65EtI2QBRmEHssBVSxBsMMggQW4WhuuNJhiWwSwmZAHWsoiUlETIAoyiYs6RF3jNT7GRYHj07ifDLqBPQcDfCOLbAasyaR5EIAuo3mwBAOJO/xnJgk8pAAAAAElFTkSuQmCC'
+            $OldContextMenu = Add-SubMenuItem -ParentMenuItem $CustomizeWindowsMenu -Text "Old Context Menu" -IconBase64 $SettingsIcon
             $OldContextMenu.add_Click({
                     New-Item -Path 'HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32' -Value "" -Force
                     $explorer = Get-Process -Name explorer
                     Stop-Process -Id $explorer.id -Force
                 })
 
-            $SearchBar = Add-SubMenuItem -ParentMenuItem $CustomizeWindowsMenu -Text "Remvoe Search Bar" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAABpUlEQVRIS2NkoDFgxGb+/1wVdsbJd36SavcHC4b/AicYUMzEagE+g/2La/4jy2/sbcFrBtEWoBuMxRF/gZaxoIsTZQGy4UJ8fAzd2elwc5Lbu1HMhPno3btPPkJCfFsIWoBs+NzKUpyhh2wRcrCBLXj9+j8vI+OnTyIi/CgWEms4zFaYJRgWwCwRFWX8jOxEmAUwlwtXaDK87biO4gtksT9//zKkd/WB5WGW4AyigOLazf8Z/vuAFCMHDbKBIDYIIFuK7gucFqC7HtnZMIPRDQfxqWoBenCRZUFlXBSDirQ03APIwYItTnD64IMlw3mB4wyGhCIZPVjQLSE6iEAG4YsHbBkCZjgjI8OVDT0tuiA1eDNaaOgq5l9yl/6gpyR8hiMnUbwW/E+RAhdqAfxJKOZhy824cjFRFmCzBJsP0F0OU4M1iD5aMFzj05GC5CIoYJzzjBFXicrIzGK+oavhFDaLMSwAVRowhfw6UmAmyHBcriYkDteIbDBME3rtRMgwvD5At4AahsMjGWj4VCAni1iXw1IYMUGHNYio5Xq8yZSc8MamBwCavr0ZdtOolgAAAABJRU5ErkJggg=='
+            $SearchBar = Add-SubMenuItem -ParentMenuItem $CustomizeWindowsMenu -Text "Remove Search Bar" -IconBase64 $SettingsIcon
             $SearchBar.add_Click({
                     Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search' -Name 'SearchboxTaskbarMode' -Value 0 -Force
                     $explorer = Get-Process -Name explorer
                     Stop-Process -Id $explorer.id -Force
                 })
 
-            $RemoveTeamsIcon = Add-SubMenuItem -ParentMenuItem $CustomizeWindowsMenu -Text "Remove Teams Icon" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAB7UlEQVRIS2NkoDFgpLH5DCPAAk/X8C8MDP+5QUFZnMDHcOP+b4atB7+DQ3b77lUEQwCvAk/XsP/bZoiBDfPKeAWPLkagrq3TxRh+/f7PEJD7Gq9FOC2AGQ4yWD+uioGZA+wJODg3qxrMBjkApAaXb7BagGy4UVor3oQGsgifJRgWeLqF/dw2XYwN5CpChsNshvkGmy8wLYCGe9XpbIYLc+vBZsAsurZqAoOqTzIDKxcvWBxmML6gwmoBSINhShODg/YisEEHryeCDSvsV4GE+wFnhpsbZ4L5/YV3wA5oMZqINS4wLLiwNe1/5YQPYE1KzNMYti15waAR2YRiweJZggxvrp9GsSBfsZ8hvvINRmRjWLByauL/BRu+gl0KcuHvX/8YppTfg/NBLoYBmA/ICiJYcIA0wwyFicH4AiKsDB/e/AbbN6fiG0NKBxdhHyAnUWRL0NMqyJKtDnpwYe8DlxiAJdvn7btW8SGrxZoP/t7O+e+T9QoeqeiGL+p8xLBIQwNdmAFkCXpSJZjRsPkC5nqwq6EA5Jszbz8zmPV1ophJVFEBi3CYYejBAxMn2gcwDaD4gKUQEA0qSTUUWRmePXgAjlDkOADJk2wBukVogf4TyGfPVZNhmHzrCViKqKICI+YoFCBYYVBo/jCokwFRz/MZ5GHtRwAAAABJRU5ErkJggg=='
+            $RemoveTeamsIcon = Add-SubMenuItem -ParentMenuItem $CustomizeWindowsMenu -Text "Remove Teams Icon" -IconBase64 $SettingsIcon
             $RemoveTeamsIcon.add_Click({
                     Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'TaskbarMn' -Value 0 -Force
                     $explorer = Get-Process -Name explorer
                     Stop-Process -Id $explorer.id -Force
                 })
 
-            $ShowHiddenExt = Add-SubMenuItem -ParentMenuItem $CustomizeWindowsMenu -Text "Show Hidden Extensions" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAABcElEQVRIS61WMW4CMRC8i+jhJ6nTR+EX1EmVDiGlgHSIMk16fhGUB6TNT6goEBLZOXlOe+u18VmxtDrO3t3ZnbF9tE08rs7cmKlWOw9ewsJGnrDcQBGI5ZO+UWwKYH38XjSzx70HwhgPpBwgU74uyoKUAUj16xSAdGW71iDvlt4kRTc0sIlSmnRC2YE2uw5Wi/tmu//1sKJKg+BlHViKHFpSDdpdle9AZbHCaoAfeXkIE2UikyIHQFfo/S4DSFBkhdQAn1LMS9hBAOmHPjSYxHsvsvGzFdOfblinyLxuWh53OhFgUEVY3MlzqUCtoB6Ae588SxK0XDNeJehDF+FdWDWJEaM1In3XWwCg6k1sKnYSO4vdiU1MQu/AdqAaIDokQXCAaH4RiDmc9lRishABcIGBtoNLcBjVAfkjb7Ua6LjBNrUJv2TiqRLlIHFzHeveprnvAYIzlx8ohfWjFgAn1vsolV3XtooRdBV18K9/W/4ALgh3E8kW9TUAAAAASUVORK5CYII='
+            $ShowHiddenExt = Add-SubMenuItem -ParentMenuItem $CustomizeWindowsMenu -Text "Show Hidden Extensions" -IconBase64 $SettingsIcon
             $ShowHiddenExt.add_Click({
                     Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'Hidden' -Value 1 -Force
+                    $explorer = Get-Process -Name explorer
+                    Stop-Process -Id $explorer.id -Force
+                })
+            $RemoveTaskButton = Add-SubMenuItem -ParentMenuItem $CustomizeWindowsMenu -Text "Remove Task View Button" -IconBase64 $SettingsIcon
+            
+            $RemoveTaskButton.add_Click({
+                    Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowTaskViewButton" -Value 0
+                    $explorer = Get-Process -Name explorer
+                    Stop-Process -Id $explorer.id -Force
+                })
+
+
+            $TaskbarButtons = Add-SubMenuItem -ParentMenuItem $CustomizeWindowsMenu -Text "Per-display Taskbar Buttons" -IconBase64 $SettingsIcon
+            $TaskbarButtons.add_Click({
+                    Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "MMTaskbarMode" -Value 2
                     $explorer = Get-Process -Name explorer
                     Stop-Process -Id $explorer.id -Force
                 })
@@ -1197,13 +1254,6 @@ $Systray_Tool_Icon.Add_Click({
             #endregion
             $form.ShowDialog()
         }
-    })
-
-$Menu_Exit.add_Click({
-        $Systray_Tool_Icon.Visible = $false
-        $window.Close()
-        # $window_Config.Close() 
-        Stop-Process $pid -ErrorAction 'SilentlyContinue'
     })
 
 # Make PowerShell Disappear
