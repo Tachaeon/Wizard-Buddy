@@ -225,7 +225,7 @@ $HelpIconBase64 = 'iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAMAAAC6V+0/AAAAWlBMVEVHcEwAA
 $Menu_Help.Image = Get-IconFromBase64 $HelpIconBase64
 
 $Menu_Help.add_Click({
-        [System.Windows.Forms.MessageBox]::Show("Mouse Scroll Wheel Up: Increase Buddy Size`nMouse Scroll Wheel Down: Decrease Buddy Size`n`nDrag .gif file onto Buddy: Changes Buddy to selected .gif`nDrag .gif from website onto Buddy: Changes Buddy to selected .gif", "Wizard Buddy Help", 'OK', 'Information')
+        [System.Windows.Forms.MessageBox]::Show("Scroll Up: Bigger Buddy`nScroll Down: Smaller Buddy`n`nDrag .gif: Change Buddy`nDrag .gif from browser: Change Buddy", "Wizard Buddy Help", 'OK', 'Information')
     })
 
 #Separator
@@ -1182,6 +1182,84 @@ $Systray_Tool_Icon.Add_Click({
                         PassThru     = $true
                     }
                     Start-Process @startParams
+                })
+
+            $JigglerIcon = 'iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAMAAAAp4XiDAAABpFBMVEVHcEy6urqEhITBwcHBwcF6enptbW2AgIBcXFzDw8OXl5eCgoJEREQJCQmBgYHBwcGCgoLCwsLCwsLAwMAEBATAwMC9vb2EhIQKCgrDw8MEBAQHBwfDw8OlpaWDg4PFxcWAgIBVVVWSkpKCgoKSkpIbGxtQUFDFxcVJSUm3t7eHh4fDw8Nvb2+AgIAAAAB/f3+Li4tdXV3CwsJ/f3+MjIwHBwdVVVV/f3+dnZ2AgIABAQFwcHCamprFxcUDAwMAAABAQEA8PDwvLy9qamqxsbHIyMg6OjqcnJwNDQ2pqamoqKjAwMCOjo6urq6ZmZmcnJx4eHiCgoJfX18AAAAeHh7AwMDBwcG/v7/ExMSDg4OAgICxsbGioqK1tbU0NDTs7Oy+vr6qqqrLy8sJCQnc3Nzh4eFMTEyIiIiLi4unp6ebm5uVlZUZGRn8/Px+fn5WVlZ0dHTGxsa8vLyurq6YmJi4uLg5OTnn5+eTk5OHh4ePj4+FhYUfHx/S0tLPz89fX18+Pj4AAADy8vLY2Nifn58REREsLCz39/ednZ2ysrIpKSlmZmbfQpm0AAAAcXRSTlMA/gEGV/7/ZAUTDMT+DfY6PixkgKOc6h1txSZAt+Gzepvz6zLF+OK5oURUWWZLMJGn6xxH8PQ92PJms7GW04/iSe3E7I3z5Tx7f/BGffJo3+SAuFSh/////////////////////////////////////u1t74QAAAMoSURBVEjH7ZXnW9pAHMcjaVKWIuDeo1q1Uzsc3Xvv5hJCEkIYGQSSBiLIECqKo/90ExBBsD76om/69PM8eXGX++S+d7n8AkH/+c9fxusdXzqnotMf5m02+DyKoBx8evDAdR5lYq5nKoXc93jcjb7u1Yt1Vq9Z2xQLZHdM3uFx3QPbjXhWu8GYr4Gjv7PT0ipZp+8OOxBmeXDQA0HXHAaj/iP23zqe9nSekM7y5eva56Bw89atG6RBENTBaMqnvLz6eLjdslqtE+iOs6uLrCkYhmPGhbMxHynSvPPREGRtiwdNX51MBGtIsVhM0gC7l4lRwaCuJWNdY3M9Q21K/8Jt8TDNniAI2STtzwiC32wDwKaKMwNDLfNYbtzWzTAmmgEt+Db8mnbURakzPa37PSFooHYbgI5taY+ixHqH2UdTyOzD68fW338zdTiC1fUkn8t2gIZQlYhMfqD5FU0vvwgQ5jYB4Oc3srSu4y0Khunik7Wmze7u0iLhcJmgKYqSJIoFptyiAAyZfX29SRG53fjuZpLfSBG1wW0KhhFSaKBZIThuMxBIp9NbBRY/g3J3MgUwnIgETMKFMoefpACK+f6trgzfUc3n1kjH42Gz0a7QufWfR8EEJUoTh8O4QsGYroyfrrgvL67z1D5bVYzjWN7aimwSWNs2NymwvXdPdgo0OHpxILzLtc6TIsmGAkGuN4jCOFFJr6+BK0fK4FgqiSd9zQq0NPhM3mHQjEhr1SE4CKQ57kdTKpJMoM58kwLbngfJaCjE5JJE7elEOR4PAByvniPza/OhO7/2j51/l/f9vaKzVFJQqboonIvUKLAitc2TpOIsjo23VBvoSt/U4k4oj8b8uhkPZzeNY7RbpvmEgcowfZ62b9Pm7v9IJRRZriREgjACGscIpLK8WZ+Ksjrqsp1UDN299+9FS0y0qKo5sQNg/m1fAlGiJpfG/1CJLZC7b0WVQ6FQBRF1PYMgCGq2Sn0X/lx17a5XC1OZLBrNH1QqeVmW84qayVyat51aq229IyMr6jpTo5QbHRnxWk4v7xYYtg1qHXXYXhg+wx8Ffnehgeuf/CH/BojZVOqa4NmCAAAAAElFTkSuQmCC'
+            $ScrollJiggler = Add-SubMenuItem -ParentMenuItem $ScriptsMenu -Text "Scroll Jiggler" -IconBase64 $JigglerIcon
+            $ScrollJiggler.add_Click({
+                    Start-Job -ScriptBlock {
+                        Add-Type -AssemblyName System.Windows.Forms
+                        Add-Type -AssemblyName System.Drawing
+
+                        #Custom Icon
+                        $JigglerIcon = 'iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAMAAAAp4XiDAAABpFBMVEVHcEy6urqEhITBwcHBwcF6enptbW2AgIBcXFzDw8OXl5eCgoJEREQJCQmBgYHBwcGCgoLCwsLCwsLAwMAEBATAwMC9vb2EhIQKCgrDw8MEBAQHBwfDw8OlpaWDg4PFxcWAgIBVVVWSkpKCgoKSkpIbGxtQUFDFxcVJSUm3t7eHh4fDw8Nvb2+AgIAAAAB/f3+Li4tdXV3CwsJ/f3+MjIwHBwdVVVV/f3+dnZ2AgIABAQFwcHCamprFxcUDAwMAAABAQEA8PDwvLy9qamqxsbHIyMg6OjqcnJwNDQ2pqamoqKjAwMCOjo6urq6ZmZmcnJx4eHiCgoJfX18AAAAeHh7AwMDBwcG/v7/ExMSDg4OAgICxsbGioqK1tbU0NDTs7Oy+vr6qqqrLy8sJCQnc3Nzh4eFMTEyIiIiLi4unp6ebm5uVlZUZGRn8/Px+fn5WVlZ0dHTGxsa8vLyurq6YmJi4uLg5OTnn5+eTk5OHh4ePj4+FhYUfHx/S0tLPz89fX18+Pj4AAADy8vLY2Nifn58REREsLCz39/ednZ2ysrIpKSlmZmbfQpm0AAAAcXRSTlMA/gEGV/7/ZAUTDMT+DfY6PixkgKOc6h1txSZAt+Gzepvz6zLF+OK5oURUWWZLMJGn6xxH8PQ92PJms7GW04/iSe3E7I3z5Tx7f/BGffJo3+SAuFSh/////////////////////////////////////u1t74QAAAMoSURBVEjH7ZXnW9pAHMcjaVKWIuDeo1q1Uzsc3Xvv5hJCEkIYGQSSBiLIECqKo/90ExBBsD76om/69PM8eXGX++S+d7n8AkH/+c9fxusdXzqnotMf5m02+DyKoBx8evDAdR5lYq5nKoXc93jcjb7u1Yt1Vq9Z2xQLZHdM3uFx3QPbjXhWu8GYr4Gjv7PT0ipZp+8OOxBmeXDQA0HXHAaj/iP23zqe9nSekM7y5eva56Bw89atG6RBENTBaMqnvLz6eLjdslqtE+iOs6uLrCkYhmPGhbMxHynSvPPREGRtiwdNX51MBGtIsVhM0gC7l4lRwaCuJWNdY3M9Q21K/8Jt8TDNniAI2STtzwiC32wDwKaKMwNDLfNYbtzWzTAmmgEt+Db8mnbURakzPa37PSFooHYbgI5taY+ixHqH2UdTyOzD68fW338zdTiC1fUkn8t2gIZQlYhMfqD5FU0vvwgQ5jYB4Oc3srSu4y0Khunik7Wmze7u0iLhcJmgKYqSJIoFptyiAAyZfX29SRG53fjuZpLfSBG1wW0KhhFSaKBZIThuMxBIp9NbBRY/g3J3MgUwnIgETMKFMoefpACK+f6trgzfUc3n1kjH42Gz0a7QufWfR8EEJUoTh8O4QsGYroyfrrgvL67z1D5bVYzjWN7aimwSWNs2NymwvXdPdgo0OHpxILzLtc6TIsmGAkGuN4jCOFFJr6+BK0fK4FgqiSd9zQq0NPhM3mHQjEhr1SE4CKQ57kdTKpJMoM58kwLbngfJaCjE5JJE7elEOR4PAByvniPza/OhO7/2j51/l/f9vaKzVFJQqboonIvUKLAitc2TpOIsjo23VBvoSt/U4k4oj8b8uhkPZzeNY7RbpvmEgcowfZ62b9Pm7v9IJRRZriREgjACGscIpLK8WZ+Ksjrqsp1UDN299+9FS0y0qKo5sQNg/m1fAlGiJpfG/1CJLZC7b0WVQ6FQBRF1PYMgCGq2Sn0X/lx17a5XC1OZLBrNH1QqeVmW84qayVyat51aq229IyMr6jpTo5QbHRnxWk4v7xYYtg1qHXXYXhg+wx8Ffnehgeuf/CH/BojZVOqa4NmCAAAAAElFTkSuQmCC'
+                        $IconBytes = [Convert]::FromBase64String($JigglerIcon)
+                        $ims = New-Object IO.MemoryStream($IconBytes, 0, $IconBytes.Length)
+                        $ims.Write($IconBytes, 0, $IconBytes.Length)
+
+                        # Create the GUI Form
+                        $form = New-Object System.Windows.Forms.Form
+                        $form.Text = "Scroll Lock Jiggler"
+                        $form.Size = New-Object System.Drawing.Size(300, 150)
+                        $form.StartPosition = "CenterScreen"
+                        $form.FormBorderStyle = "FixedSingle"
+                        $Form.Icon = [System.Drawing.Icon]::FromHandle((New-Object System.Drawing.Bitmap -Argument $ims).GetHIcon())
+                        $Form.BackColor = [System.Drawing.Color]::FromArgb(0, 48, 73)
+                        $form.MaximizeBox = $false
+                        $form.ShowinTaskbar = $false
+
+                        # Add Start/Stop Button
+                        $button = New-Object System.Windows.Forms.Button
+                        $button.Size = New-Object System.Drawing.Size(100, 40)
+                        $button.Location = New-Object System.Drawing.Point(95, 40)
+                        $button.Text = "Start"
+                        $button.BackColor = 'LightGreen'
+                        $form.Controls.Add($button)
+
+                        # Global job reference and state
+                        $jiggling = $false
+                        $script:job = $null
+
+                        # Button click logic
+                        $button.Add_Click({
+                                if (-not $jiggling) {
+                                    $jiggling = $true
+                                    $button.Text = "Stop"
+                                    $button.BackColor = 'Tomato'  # Red color
+
+                                    $script:job = Start-Job {
+                                        $wshell = New-Object -ComObject WScript.Shell
+                                        while ($true) {
+                                            $wshell.SendKeys("{SCROLLLOCK}")
+                                            Start-Sleep -Milliseconds 100
+                                            $wshell.SendKeys("{SCROLLLOCK}")
+                                            Start-Sleep -Seconds 60
+                                        }
+                                    }
+                                }
+                                else {
+                                    $jiggling = $false
+                                    $button.Text = "Start"
+                                    $button.BackColor = 'LightGreen'  # Green color
+
+                                    if ($script:job -and ($script:job.State -eq 'Running')) {
+                                        Stop-Job $script:job | Out-Null
+                                        Remove-Job $script:job | Out-Null
+                                    }
+                                }
+                            })
+
+                        # Cleanup when the form is closed
+                        $form.add_FormClosing({
+                                if ($script:job -and ($script:job.State -eq 'Running')) {
+                                    Stop-Job $script:job | Out-Null
+                                    Remove-Job $script:job | Out-Null
+                                }
+                            })
+
+                        # Run the form
+                        [void]$form.ShowDialog()
+                    }
                 })
             #endregion
 
