@@ -6,6 +6,14 @@ $Version = "2.0"
 [void] [System.Reflection.Assembly]::LoadWithPartialName("WindowsFormsIntegration") 
 
 #region Functions
+$margin = 12
+function Set-FormBottomRight([System.Windows.Forms.Form]$f, [System.Windows.Forms.Screen]$screen, [int]$pad) {
+    $wa = $screen.WorkingArea  # excludes taskbar / dock
+    $x = $wa.Right - $f.Width - $pad
+    $y = $wa.Bottom - $f.Height - $pad
+    $f.Location = [System.Drawing.Point]::new($x, $y)
+}
+
 function Install-Application {
     param (
         [string]$AppID,
@@ -540,9 +548,107 @@ $Systray_Tool_Icon.Add_Click({
             $PasswordGen = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Password Generator" -IconBase64 $DogIcon
             $PasswordGen.add_Click({
                     Start-Job -ScriptBlock {
-                        Start-Process -FilePath "powershell" `
-                            -ArgumentList '-NoLogo -NoProfile -ExecutionPolicy Bypass -File "C:\Projects\Base64-Converter\Get-Base64.ps1"'
-                    }
+                        param($value)
+                        Add-Type -AssemblyName System.Windows.Forms
+                        Add-Type -AssemblyName System.Drawing
+
+                        #Custom Icon
+                        $IconBytes = [Convert]::FromBase64String($value)
+                        $ims = New-Object IO.MemoryStream($IconBytes, 0, $IconBytes.Length)
+                        $ims.Write($IconBytes, 0, $IconBytes.Length)
+
+                        # Create form
+                        $form = New-Object System.Windows.Forms.Form
+                        $form.Text = "Password Generator"
+                        $form.Size = New-Object System.Drawing.Size(377, 240)
+                        $Form.Icon = [System.Drawing.Icon]::FromHandle((New-Object System.Drawing.Bitmap -Argument $ims).GetHIcon())
+                        $form.TopMost = $true
+                        $form.StartPosition = "CenterScreen"
+                        $form.FormBorderStyle = "FixedDialog"
+                        $Form.BackColor = [System.Drawing.Color]::FromArgb(0, 48, 73)
+                        $form.ShowinTaskbar = $false
+                        $form.ForeColor = 'White'
+
+                        # Create label for password length
+                        $lblPasswordLength = New-Object System.Windows.Forms.Label
+                        $lblPasswordLength.Text = "Password Length:"
+                        $lblPasswordLength.AutoSize = $true
+                        $lblPasswordLength.Location = New-Object System.Drawing.Point(10, 26)
+
+                        # Create label for Clipboard notification
+                        $clipboardnotif = New-Object System.Windows.Forms.Label
+                        $clipboardnotif.Text = "Copied to Clipboard:"
+                        $clipboardnotif.AutoSize = $true
+                        $clipboardnotif.Location = New-Object System.Drawing.Point(10, 63)
+
+                        # Create textbox for password length
+                        $txtPasswordLength = New-Object System.Windows.Forms.TextBox
+                        $txtPasswordLength.Width = 50
+                        $txtPasswordLength.Location = New-Object System.Drawing.Point(120, 26)
+                        $txtPasswordLength.Add_KeyDown({
+                                if ($_.KeyCode -eq 'Enter') {
+                                    $btnGenerate.PerformClick()
+                                }
+                            })
+
+                        # Create button for generating password
+                        $btnGenerate = New-Object System.Windows.Forms.Button
+                        $btnGenerate.Text = "Generate Password"
+                        $btnGenerate.Width = 150
+                        $btnGenerate.Height = 30
+                        $btnGenerate.Location = New-Object System.Drawing.Point(190, 20)
+                        $btnGenerate.Add_Click({
+                                # Clear the outputTextBox
+                                $outputTextBox.Clear()
+                                $PasswordLength = $txtPasswordLength.Text
+                                if ([int]::TryParse($PasswordLength, [ref]$null)) {
+                                    $Password = New-RandomPassword $PasswordLength
+                                    $outputTextBox.AppendText("$Password")
+                                    Set-Clipboard $Password
+                                }
+                                else {
+                                    $outputTextBox.AppendText("Please enter a valid number for password length.`r")
+                                }
+                            })
+
+                        # Create textbox for output
+                        $outputTextBox = New-Object System.Windows.Forms.TextBox
+                        $outputTextBox.Multiline = $true
+                        $outputTextBox.Width = 340
+                        $outputTextBox.Height = 110
+                        $outputTextBox.Location = New-Object System.Drawing.Point(10, 80)
+                        $outputTextBox.ReadOnly = $true
+                        $outputTextBox.TabStop = $false
+                        $outputTextBox.BackColor = [System.Drawing.Color]::White
+
+                        # Function to generate a random password
+                        function New-RandomPassword {
+                            param(
+                                [Parameter(Mandatory = $true)]
+                                [Alias('length')]
+                                [ValidateRange(1, [int]::MaxValue)]  # Set a valid range for password length
+                                [int]$PasswordLength
+                            )
+                            $validCharacters = 48..57 + 65..90 + 97..122 + (
+                                '!', '@', '#', '%', '^', '&', '*'
+                            ) | ForEach-Object { [char]$_ }
+
+                            return (1..$PasswordLength | ForEach-Object {
+                                    Get-Random $validCharacters
+                                }) -join ''
+                        }
+
+                        # Add controls to the form
+                        $form.Controls.Add($lblPasswordLength)
+                        $form.Controls.Add($clipboardnotif)
+                        $form.Controls.Add($txtPasswordLength)
+                        $form.Controls.Add($btnGenerate)
+                        $form.Controls.Add($outputTextBox)
+
+                        # Show the form
+                        $form.Add_Shown({ $form.Activate() })
+                        $form.ShowDialog()
+                    } -ArgumentList $DogIcon
                 })
 
             $Powershell = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Powerhsell" -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
@@ -599,6 +705,83 @@ $Systray_Tool_Icon.Add_Click({
             $Regedit = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Registry" -FilePath "$env:SystemRoot\System32\regedt32.exe"
             $Regedit.add_Click({
                     Start-Process regedit
+                })
+
+            $ScrollJiggler = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Scroll Jiggler" -IconBase64 $DogIcon
+            $ScrollJiggler.add_Click({
+                    Start-Job -ScriptBlock {
+                        param($value)
+                        Add-Type -AssemblyName System.Windows.Forms
+                        Add-Type -AssemblyName System.Drawing
+
+                        #Custom Icon
+                        $IconBytes = [Convert]::FromBase64String($value)
+                        $ims = New-Object IO.MemoryStream($IconBytes, 0, $IconBytes.Length)
+                        $ims.Write($IconBytes, 0, $IconBytes.Length)
+
+                        # Create the GUI Form
+                        $form = New-Object System.Windows.Forms.Form
+                        $form.Text = "Scroll Lock Jiggler"
+                        $form.Size = New-Object System.Drawing.Size(300, 150)
+                        $form.StartPosition = "CenterScreen"
+                        $form.FormBorderStyle = "FixedSingle"
+                        $Form.Icon = [System.Drawing.Icon]::FromHandle((New-Object System.Drawing.Bitmap -Argument $ims).GetHIcon())
+                        $Form.BackColor = [System.Drawing.Color]::FromArgb(0, 48, 73)
+                        $form.MaximizeBox = $false
+                        $form.ShowinTaskbar = $false
+
+                        # Add Start/Stop Button
+                        $button = New-Object System.Windows.Forms.Button
+                        $button.Size = New-Object System.Drawing.Size(100, 40)
+                        $button.Location = New-Object System.Drawing.Point(95, 40)
+                        $button.Text = "Start"
+                        $button.BackColor = 'LightGreen'
+                        $form.Controls.Add($button)
+
+                        # Global job reference and state
+                        $jiggling = $false
+                        $script:job = $null
+
+                        # Button click logic
+                        $button.Add_Click({
+                                if (-not $jiggling) {
+                                    $jiggling = $true
+                                    $button.Text = "Stop"
+                                    $button.BackColor = 'Tomato'  # Red color
+
+                                    $script:job = Start-Job {
+                                        $wshell = New-Object -ComObject WScript.Shell
+                                        while ($true) {
+                                            $wshell.SendKeys("{SCROLLLOCK}")
+                                            Start-Sleep -Milliseconds 100
+                                            $wshell.SendKeys("{SCROLLLOCK}")
+                                            Start-Sleep -Seconds 60
+                                        }
+                                    }
+                                }
+                                else {
+                                    $jiggling = $false
+                                    $button.Text = "Start"
+                                    $button.BackColor = 'LightGreen'  # Green color
+
+                                    if ($script:job -and ($script:job.State -eq 'Running')) {
+                                        Stop-Job $script:job | Out-Null
+                                        Remove-Job $script:job | Out-Null
+                                    }
+                                }
+                            })
+
+                        # Cleanup when the form is closed
+                        $form.add_FormClosing({
+                                if ($script:job -and ($script:job.State -eq 'Running')) {
+                                    Stop-Job $script:job | Out-Null
+                                    Remove-Job $script:job | Out-Null
+                                }
+                            })
+
+                        # Run the form
+                        [void]$form.ShowDialog()
+                    } -ArgumentList $DogIcon
                 })
 
             $Sandbox = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Windows Sandbox" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAADG0lEQVRIS9VUzYtOURh/nvPO+CgbZEc21hbY+IjJKJFENmShFKWmZiWxtPFfKImahrKYhWEWlIWUUkYj2dlIWDDe+957zzmP3++ce9+Y780Ut9733nvueX5fz3Ovyiofusr48u8QbDh3P4a61FhV4qtawuORFYlbdtP682PmxEyDl+hL9WUloQ7GJRG1MDnilop5UYJ1Fx5FtVo1RNPoVS1ahANfegt1DcyYa82ZWdT4dHRBrHmLgxcnzEWP+iAaanHQKrFSF0lQaahK8TWeG8BVYSSdcJv+ZC5Rn6Bz6QmUAhRAGmucoT6ReEtOQBqZPX+eDjJ4QocMHIojryE6mxpN0aleeQ5/Xp0FQSWAvbiIbaHCmU5KqMd93cPlL/CBoAaKG0B1Bw8ALE4iCJNaZcfIwp/Dw8tTUBixBSshK3UGIgAlJ3UhVhWy6dRpgTkKT8eXO7dFOmsbIoBKh6x4jtZxH1xgBFSHPwIdAT67NYFnuAA48xbfVVcVtvH4MRRECRicEGICZyoQKs6pfL13F0Rr4AOOQIKGKZTI1htXDaGoHv7A+LIqFr64+QBxdHXzkYNCJcSM+EMrUJcJ6ILgrtOQ4f772BjwB2Xb9WvikWxA4snH0PuEz1lhj3LPcLydnAGggiAJEraBFWm35uvkgulrlC27dgqHixOMOUjCCKWHSICbPBF9RcZikr56+AYnZsucc+9YwNiQsWwf2k1go2q85EpwknCbc+AemkFUfxIQBFh9M7zA0svx19DKUWBplB3De5LiBNwqB1GNaDAnyeMAB40OMO4obgQyqmwmE9EJU8ACAYtCBF+LDBwAWGLQSNCQMc4UD/YPkiAnLnLgXW42pKObzXqjvh2AEtaLnljRBShE8X1LwBRIYHSS6rm/ezZ3c96ngkTtsOSXMg8Az1VPdLabSBIoJ8WzHfwA8POHfT/OtGOShS/6sds/3ThqRpjOeiSYBUHZqKVqkPD4djKFOe9YlKDduY9ETYOoHA6sB4LUSJB/PvG34rkMyxK0BXunLaLB+hMEjOrT0aWB27oVEyxkfyVr/z/BbznHFVQo2fguAAAAAElFTkSuQmCC'
@@ -1183,84 +1366,6 @@ $Systray_Tool_Icon.Add_Click({
                     }
                     Start-Process @startParams
                 })
-
-            $JigglerIcon = 'iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAMAAAAp4XiDAAABpFBMVEVHcEy6urqEhITBwcHBwcF6enptbW2AgIBcXFzDw8OXl5eCgoJEREQJCQmBgYHBwcGCgoLCwsLCwsLAwMAEBATAwMC9vb2EhIQKCgrDw8MEBAQHBwfDw8OlpaWDg4PFxcWAgIBVVVWSkpKCgoKSkpIbGxtQUFDFxcVJSUm3t7eHh4fDw8Nvb2+AgIAAAAB/f3+Li4tdXV3CwsJ/f3+MjIwHBwdVVVV/f3+dnZ2AgIABAQFwcHCamprFxcUDAwMAAABAQEA8PDwvLy9qamqxsbHIyMg6OjqcnJwNDQ2pqamoqKjAwMCOjo6urq6ZmZmcnJx4eHiCgoJfX18AAAAeHh7AwMDBwcG/v7/ExMSDg4OAgICxsbGioqK1tbU0NDTs7Oy+vr6qqqrLy8sJCQnc3Nzh4eFMTEyIiIiLi4unp6ebm5uVlZUZGRn8/Px+fn5WVlZ0dHTGxsa8vLyurq6YmJi4uLg5OTnn5+eTk5OHh4ePj4+FhYUfHx/S0tLPz89fX18+Pj4AAADy8vLY2Nifn58REREsLCz39/ednZ2ysrIpKSlmZmbfQpm0AAAAcXRSTlMA/gEGV/7/ZAUTDMT+DfY6PixkgKOc6h1txSZAt+Gzepvz6zLF+OK5oURUWWZLMJGn6xxH8PQ92PJms7GW04/iSe3E7I3z5Tx7f/BGffJo3+SAuFSh/////////////////////////////////////u1t74QAAAMoSURBVEjH7ZXnW9pAHMcjaVKWIuDeo1q1Uzsc3Xvv5hJCEkIYGQSSBiLIECqKo/90ExBBsD76om/69PM8eXGX++S+d7n8AkH/+c9fxusdXzqnotMf5m02+DyKoBx8evDAdR5lYq5nKoXc93jcjb7u1Yt1Vq9Z2xQLZHdM3uFx3QPbjXhWu8GYr4Gjv7PT0ipZp+8OOxBmeXDQA0HXHAaj/iP23zqe9nSekM7y5eva56Bw89atG6RBENTBaMqnvLz6eLjdslqtE+iOs6uLrCkYhmPGhbMxHynSvPPREGRtiwdNX51MBGtIsVhM0gC7l4lRwaCuJWNdY3M9Q21K/8Jt8TDNniAI2STtzwiC32wDwKaKMwNDLfNYbtzWzTAmmgEt+Db8mnbURakzPa37PSFooHYbgI5taY+ixHqH2UdTyOzD68fW338zdTiC1fUkn8t2gIZQlYhMfqD5FU0vvwgQ5jYB4Oc3srSu4y0Khunik7Wmze7u0iLhcJmgKYqSJIoFptyiAAyZfX29SRG53fjuZpLfSBG1wW0KhhFSaKBZIThuMxBIp9NbBRY/g3J3MgUwnIgETMKFMoefpACK+f6trgzfUc3n1kjH42Gz0a7QufWfR8EEJUoTh8O4QsGYroyfrrgvL67z1D5bVYzjWN7aimwSWNs2NymwvXdPdgo0OHpxILzLtc6TIsmGAkGuN4jCOFFJr6+BK0fK4FgqiSd9zQq0NPhM3mHQjEhr1SE4CKQ57kdTKpJMoM58kwLbngfJaCjE5JJE7elEOR4PAByvniPza/OhO7/2j51/l/f9vaKzVFJQqboonIvUKLAitc2TpOIsjo23VBvoSt/U4k4oj8b8uhkPZzeNY7RbpvmEgcowfZ62b9Pm7v9IJRRZriREgjACGscIpLK8WZ+Ksjrqsp1UDN299+9FS0y0qKo5sQNg/m1fAlGiJpfG/1CJLZC7b0WVQ6FQBRF1PYMgCGq2Sn0X/lx17a5XC1OZLBrNH1QqeVmW84qayVyat51aq229IyMr6jpTo5QbHRnxWk4v7xYYtg1qHXXYXhg+wx8Ffnehgeuf/CH/BojZVOqa4NmCAAAAAElFTkSuQmCC'
-            $ScrollJiggler = Add-SubMenuItem -ParentMenuItem $ScriptsMenu -Text "Scroll Jiggler" -IconBase64 $JigglerIcon
-            $ScrollJiggler.add_Click({
-                    Start-Job -ScriptBlock {
-                        Add-Type -AssemblyName System.Windows.Forms
-                        Add-Type -AssemblyName System.Drawing
-
-                        #Custom Icon
-                        $JigglerIcon = 'iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAMAAAAp4XiDAAABpFBMVEVHcEy6urqEhITBwcHBwcF6enptbW2AgIBcXFzDw8OXl5eCgoJEREQJCQmBgYHBwcGCgoLCwsLCwsLAwMAEBATAwMC9vb2EhIQKCgrDw8MEBAQHBwfDw8OlpaWDg4PFxcWAgIBVVVWSkpKCgoKSkpIbGxtQUFDFxcVJSUm3t7eHh4fDw8Nvb2+AgIAAAAB/f3+Li4tdXV3CwsJ/f3+MjIwHBwdVVVV/f3+dnZ2AgIABAQFwcHCamprFxcUDAwMAAABAQEA8PDwvLy9qamqxsbHIyMg6OjqcnJwNDQ2pqamoqKjAwMCOjo6urq6ZmZmcnJx4eHiCgoJfX18AAAAeHh7AwMDBwcG/v7/ExMSDg4OAgICxsbGioqK1tbU0NDTs7Oy+vr6qqqrLy8sJCQnc3Nzh4eFMTEyIiIiLi4unp6ebm5uVlZUZGRn8/Px+fn5WVlZ0dHTGxsa8vLyurq6YmJi4uLg5OTnn5+eTk5OHh4ePj4+FhYUfHx/S0tLPz89fX18+Pj4AAADy8vLY2Nifn58REREsLCz39/ednZ2ysrIpKSlmZmbfQpm0AAAAcXRSTlMA/gEGV/7/ZAUTDMT+DfY6PixkgKOc6h1txSZAt+Gzepvz6zLF+OK5oURUWWZLMJGn6xxH8PQ92PJms7GW04/iSe3E7I3z5Tx7f/BGffJo3+SAuFSh/////////////////////////////////////u1t74QAAAMoSURBVEjH7ZXnW9pAHMcjaVKWIuDeo1q1Uzsc3Xvv5hJCEkIYGQSSBiLIECqKo/90ExBBsD76om/69PM8eXGX++S+d7n8AkH/+c9fxusdXzqnotMf5m02+DyKoBx8evDAdR5lYq5nKoXc93jcjb7u1Yt1Vq9Z2xQLZHdM3uFx3QPbjXhWu8GYr4Gjv7PT0ipZp+8OOxBmeXDQA0HXHAaj/iP23zqe9nSekM7y5eva56Bw89atG6RBENTBaMqnvLz6eLjdslqtE+iOs6uLrCkYhmPGhbMxHynSvPPREGRtiwdNX51MBGtIsVhM0gC7l4lRwaCuJWNdY3M9Q21K/8Jt8TDNniAI2STtzwiC32wDwKaKMwNDLfNYbtzWzTAmmgEt+Db8mnbURakzPa37PSFooHYbgI5taY+ixHqH2UdTyOzD68fW338zdTiC1fUkn8t2gIZQlYhMfqD5FU0vvwgQ5jYB4Oc3srSu4y0Khunik7Wmze7u0iLhcJmgKYqSJIoFptyiAAyZfX29SRG53fjuZpLfSBG1wW0KhhFSaKBZIThuMxBIp9NbBRY/g3J3MgUwnIgETMKFMoefpACK+f6trgzfUc3n1kjH42Gz0a7QufWfR8EEJUoTh8O4QsGYroyfrrgvL67z1D5bVYzjWN7aimwSWNs2NymwvXdPdgo0OHpxILzLtc6TIsmGAkGuN4jCOFFJr6+BK0fK4FgqiSd9zQq0NPhM3mHQjEhr1SE4CKQ57kdTKpJMoM58kwLbngfJaCjE5JJE7elEOR4PAByvniPza/OhO7/2j51/l/f9vaKzVFJQqboonIvUKLAitc2TpOIsjo23VBvoSt/U4k4oj8b8uhkPZzeNY7RbpvmEgcowfZ62b9Pm7v9IJRRZriREgjACGscIpLK8WZ+Ksjrqsp1UDN299+9FS0y0qKo5sQNg/m1fAlGiJpfG/1CJLZC7b0WVQ6FQBRF1PYMgCGq2Sn0X/lx17a5XC1OZLBrNH1QqeVmW84qayVyat51aq229IyMr6jpTo5QbHRnxWk4v7xYYtg1qHXXYXhg+wx8Ffnehgeuf/CH/BojZVOqa4NmCAAAAAElFTkSuQmCC'
-                        $IconBytes = [Convert]::FromBase64String($JigglerIcon)
-                        $ims = New-Object IO.MemoryStream($IconBytes, 0, $IconBytes.Length)
-                        $ims.Write($IconBytes, 0, $IconBytes.Length)
-
-                        # Create the GUI Form
-                        $form = New-Object System.Windows.Forms.Form
-                        $form.Text = "Scroll Lock Jiggler"
-                        $form.Size = New-Object System.Drawing.Size(300, 150)
-                        $form.StartPosition = "CenterScreen"
-                        $form.FormBorderStyle = "FixedSingle"
-                        $Form.Icon = [System.Drawing.Icon]::FromHandle((New-Object System.Drawing.Bitmap -Argument $ims).GetHIcon())
-                        $Form.BackColor = [System.Drawing.Color]::FromArgb(0, 48, 73)
-                        $form.MaximizeBox = $false
-                        $form.ShowinTaskbar = $false
-
-                        # Add Start/Stop Button
-                        $button = New-Object System.Windows.Forms.Button
-                        $button.Size = New-Object System.Drawing.Size(100, 40)
-                        $button.Location = New-Object System.Drawing.Point(95, 40)
-                        $button.Text = "Start"
-                        $button.BackColor = 'LightGreen'
-                        $form.Controls.Add($button)
-
-                        # Global job reference and state
-                        $jiggling = $false
-                        $script:job = $null
-
-                        # Button click logic
-                        $button.Add_Click({
-                                if (-not $jiggling) {
-                                    $jiggling = $true
-                                    $button.Text = "Stop"
-                                    $button.BackColor = 'Tomato'  # Red color
-
-                                    $script:job = Start-Job {
-                                        $wshell = New-Object -ComObject WScript.Shell
-                                        while ($true) {
-                                            $wshell.SendKeys("{SCROLLLOCK}")
-                                            Start-Sleep -Milliseconds 100
-                                            $wshell.SendKeys("{SCROLLLOCK}")
-                                            Start-Sleep -Seconds 60
-                                        }
-                                    }
-                                }
-                                else {
-                                    $jiggling = $false
-                                    $button.Text = "Start"
-                                    $button.BackColor = 'LightGreen'  # Green color
-
-                                    if ($script:job -and ($script:job.State -eq 'Running')) {
-                                        Stop-Job $script:job | Out-Null
-                                        Remove-Job $script:job | Out-Null
-                                    }
-                                }
-                            })
-
-                        # Cleanup when the form is closed
-                        $form.add_FormClosing({
-                                if ($script:job -and ($script:job.State -eq 'Running')) {
-                                    Stop-Job $script:job | Out-Null
-                                    Remove-Job $script:job | Out-Null
-                                }
-                            })
-
-                        # Run the form
-                        [void]$form.ShowDialog()
-                    }
-                })
             #endregion
 
             #Separator
@@ -1330,7 +1435,11 @@ $Systray_Tool_Icon.Add_Click({
                     }
                 })
             #endregion
-            $form.ShowDialog()
+            $form.Add_Shown({
+                    Set-FormBottomRight -f $form -screen ([System.Windows.Forms.Screen]::PrimaryScreen) -pad $margin
+                })
+
+            [void]$form.ShowDialog()
         }
     })
 
