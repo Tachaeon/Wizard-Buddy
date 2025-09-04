@@ -14,6 +14,22 @@ function Set-FormBottomRight([System.Windows.Forms.Form]$f, [System.Windows.Form
     $f.Location = [System.Drawing.Point]::new($x, $y)
 }
 
+function Add-ShiftClickHandler {
+    param (
+        [System.Windows.Forms.ToolStripMenuItem]$MenuItem,
+        [string]$Executable
+    )
+
+    $MenuItem.add_Click({
+            if ([System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Shift) {
+                Start-Process $Executable -Verb RunAs
+            }
+            else {
+                Start-Process $Executable
+            }
+        })
+}
+
 function Install-Application {
     param (
         [string]$AppID,
@@ -233,7 +249,7 @@ $HelpIconBase64 = 'iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAMAAAC6V+0/AAAAWlBMVEVHcEwAA
 $Menu_Help.Image = Get-IconFromBase64 $HelpIconBase64
 
 $Menu_Help.add_Click({
-        [System.Windows.Forms.MessageBox]::Show("Scroll Up: Bigger Buddy`nScroll Down: Smaller Buddy`n`nDrag .gif: Change Buddy`nDrag .gif from browser: Change Buddy", "Wizard Buddy Help", 'OK', 'Information')
+        [System.Windows.Forms.MessageBox]::Show("Scroll Up: Bigger Buddy`nScroll Down: Smaller Buddy`n`nDrag .gif: Change Buddy`nDrag .gif from browser: Change Buddy`n`nShift-Left Click Apps = Run as Admin", "Wizard Buddy Help", 'OK', 'Information')
     })
 
 #Separator
@@ -531,12 +547,22 @@ $Systray_Tool_Icon.Add_Click({
 
             $CMD = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Command Prompt" -FilePath "$env:SystemRoot\System32\cmd.exe"
             $CMD.add_Click({
-                    Start-Process 'cmd.exe'
+                    if ([System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Shift) {
+                        Start-Process "cmd.exe" -Verb RunAs
+                    }
+                    else {
+                        Start-Process "cmd.exe"
+                    }
                 })
 
             $Comp_Mgmt = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Computer Management" -FilePath "$env:SystemRoot\System32\compmgmt.msc"
             $Comp_Mgmt.add_Click({
-                    Start-Process 'compmgmt.msc'
+                    if ([System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Shift) {
+                        Start-Process "compmgmt.msc" -Verb RunAs
+                    }
+                    else {
+                        Start-Process "compmgmt.msc"
+                    }
                 })
 
             $GPupdate = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Group Policy Update" -FilePath "$env:SystemRoot\System32\cmd.exe"
@@ -552,12 +578,22 @@ $Systray_Tool_Icon.Add_Click({
 
             $MMC = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "MMC" -FilePath "$env:SystemRoot\System32\mmc.exe"
             $MMC.add_Click({
-                    Start-Process 'mmc.exe'
+                    if ([System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Shift) {
+                        Start-Process "mmc.exe" -Verb RunAs
+                    }
+                    else {
+                        Start-Process "mmc.exe"
+                    }
                 })
 
             $NetworkConn = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Network Connections" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAFdUlEQVRIS62Ve0xTZxjGn3PpOVBoSwtU2lIKipeN4W0Gr8xtbsbhxKhhQZwaN5ORzRglyjZ0GZvDLIuYuAte5wTDjMw5haDuD9icCjKH4qLgBbQWbHTKrNT13p69pyCTxcxs80tOenrO+Z7f+z3v+34fAxrFxcUsXSH5/nEPRhaU3IeklhO1MCfFQBDVEDQT4bSdfCN+ZOG2/wvsA1RLAIOGI9/AlGxBbFwsOE4JhhWILkERPRa8alT42387HgDQVEbE2WM10BtNiFRGIUJUAqEQONUoWtX4xwFQ4OjBPbAMSYZaQ3YpIsCxEnj10xBiJjwOAIe6fZVkkxlxZJMgiOA5EGAcRO3kfkBtTU0pw3FFWVlZ3kdZNtAisKj7lgBmE+LidTh/cyJ4PogUkwKmwVPD3+7etWvewgJuH0QjEJEAsElY/uplzJ/hg9FkQDAQJGvFS/D5ZhtTUi4MAEihIOr374Uh0YA4fSzWfurH9v3pgDAIEONpKQYsy7Xi5Uw/hqfGIBhioIxUwOMT6Z0ODM+HVyyP1gsXcf1yQ1svwHVAkkI+SAEf6qurYTQbqZK0SBhPSVZaSFxPEPkahI46HVWYXBAUPEtz6dYfAOKjnGhsvgpD8sjwew1jRePJU6owINizR5KCHgJ48ePhOhhkQKwWr6xOx7FmP6Cg6IW4MOTg1gQkJ5I+ibB0yWIsqSilLpy1GcDREmghSNZ0YGhqKhMGBLq3S1LAgx6HC2dONcOUZECAH4YNuywor7rda4+gI5Ae2TMSsGIx9QiJyACWfuVVGCM68P1JA/1XEJTF5CcvIi0trRfgu7ExDLBdAzqtLUi0DILt3kv48msvbHY/Tpz2kMcaAmgRHaPD5o8sYSGW1FmiBIgwbsglbN6rIXF6TqtYlNWJ9PT0XoCn80MCeHGtMxL2zhaYzTpY3fPw8aZb8AZYHG+6GxaneqVfDUoKh/ZFqiCrOLi9DOa/2IllxV6ySH7G4/38bmRkZPQCWurWLxxm6a6wXtdi2+cVi3IWzMzv4adNKnivCx53AFZ7ABIbTQAVma7CkgWpJCSGxTgy/LaDQe6zx1BQEkn+R5B1PEpW3pBycnLk9PQOV3uBdLVLix1lldl+SX3uiefeurJ2Ha3AF4CbIBIJg4siSDQyJ5nBC5EkLoQtuf6bD+8sPovdB0ag/uhFBHwMKjcjlJeXxw1o/3M/rJO2bjmQ+tne5o5NpaWS3+/HlKmTMGHyaUq0g8RjKKsiNaIeCoG2EU4gqwSseF2EVnkFju7uckvK4MVihEhBub+YNWvWskfuL2VlZVoi3eR5XuHxUCnT7po64iksWh2FP+5cC+fi59pEXLZ2t86dnZ32962jH1BVVSWQZ0GGYeSDR668hw3avxFZUrPFMdxNDUf+R6tU5DsPV4g9nPX8MzNp/oC5/QC73T5HqVIpvP5g7J17rlFHrK0Zq0YfGhOICmBpV9oHbElzyc5Vfh/T7gDX8jtCF7rRUPRdpcflMU8Zm55L4DBcrnq6bHJ7yRH2A7Jfy6/JzctTG+O0NtftUNvctjUlPrMGSr0WSw0vQBQEbEcTHRlOOF1OKN/9BY7KM2bSuNUnej9yeSPpd2FADvrOZuooJBqWZ/5613kPLp4C0dGeFKOCEKsGq6EgaXqlYTW8TmWjWn0z1HS8cee6NYUVctSUI3LpL5v+KclyJLEKhSIpt7zo8Pn21rh2awecXhemZ06H38FiY9bCfI5hu6iTFWpdvKHH7R/WZuuqz5uWWXM/gY+sogcyTXsnqBmQuHLH+rfLCzeUlVbs+WSIyRiizrJrI8WmhhM/2fUjRp+aM3GM9b8AHlpWfZbQgQD9V9W1RUuyZ77Zl4Pw938CtiH44nsXMCoAAAAASUVORK5CYII='
             $NetworkConn.add_Click({
-                    Start-Process 'ncpa.cpl'
+                    if ([System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Shift) {
+                        Start-Process "ncpa.cpl" -Verb RunAs
+                    }
+                    else {
+                        Start-Process "ncpa.cpl"
+                    }
                 })
             #Password Generator
             $PasswordGen = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Password Generator" -IconBase64 $DogIcon
@@ -668,7 +704,12 @@ $Systray_Tool_Icon.Add_Click({
 
             $Powershell = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Powerhsell" -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
             $Powershell.add_Click({
-                    Start-Process powershell.exe
+                    if ([System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Shift) {
+                        Start-Process "powershell.exe" -Verb RunAs
+                    }
+                    else {
+                        Start-Process "powershell.exe"
+                    }
                 })
 
             $Powershell7 = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Powerhsell 7" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAYAAADE6YVjAAADGUlEQVRIS92VXUhUQRTH5+pCD2EvUdCDlOKuWazhSmVhhVgW1cMWZV8qkrvRW5QQPRRFvfRSCEYIFfRJuEUJQVL5EVhklq6VC4mtstuSsgQrtpjux53OmZk7915v9SQ+uDDM7Oze/2/O/5wzVyFz8FHmgEHmMeT9GK3z1Hhvoo2UUhgqoWqaj3SaqGoKBq5hliMJaxywl0qSNJsTbG98NKhY7NrpuRj/Hg4vBHUBUJkwQqziGkgAEMQgfEbIRDRkhTgrPKguAQPtt1lt5G+q5JHgKTEamHk0IMoE+VoTT0MkufmFv/q7ni2yROLcVgcugUUwVBAdaL9LMjL43/JK3ExoplXGk7NIRBT3XkWu7nEp9SbIux/U5a2p66WU54DbkyZfu5plpecU7xAnFieHCDRRHkUCvuNvCTI5HmX6Jkhjy4ehpsZreVTFPAiQsGWou0WCsp1bwBYjhCfZaBWup+IxK2R1eS24JCIwVhDuAWykt1WCljnWi4rS7eFWAVDMyam4FbKqrNoE0UsUq4snO/y5U4KWrCgUiefCvAj4+k77z75DGxcUm+zy+Wjm+etVKUy2JsgqSIhr1RMJvJGQxdkFppJlAGZbgpyd/p15QVFUE+R1MNl7vLbahbn4mzjuRQJdElCw6xwZ8z9kueGnh4QLABYC2C7zLRcrNx+EfAuAqZtTZLjvJbHZbLpNOWtIanpSJtuYB63zjUUlIY7S/VC5erNpjRb61CHFn7b5iffoERYptwbmJM5Yttwm3Ku//Hjoypl9Du1BCbFv2AuR6J1cYM8hz5ubJMBecYrEBl+IyhF3FVokxLVewQd8PbSocp3Sb4J0BmmD57D7BDs9gIY/thLFcOMszS1i1jy41Ui2by2zvILKK0+SjkcNxn1T/7EvFVWnJ74NBrK0kg31t7EHnO5LJPrlibybKIBio0ELZHnpMRJ+e+P/kNy1u6EY9A42XttaJ2v308wkY07gpaBfO/lF8ZFBf5aFCPcRg7DSw9nwbpANJt4RRgiu8cY2fpq7afWBEuX+P8Oy+DBLG/P4HT9LDplk/gBqUDhH4Vn75gAAAABJRU5ErkJggg=='
@@ -676,7 +717,12 @@ $Systray_Tool_Icon.Add_Click({
                     $PWSH = "C:\Program Files\PowerShell\7\pwsh.exe"
                     Test-Path $PWSH
                     if ($PWSH) {
-                        Start-Process $PWSH
+                        if ([System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Shift) {
+                            Start-Process $PWSH -Verb RunAs
+                        }
+                        else {
+                            Start-Process $PWSH
+                        }
                     }
                     else {
                         WingetCheck
@@ -691,7 +737,12 @@ $Systray_Tool_Icon.Add_Click({
 
             $PowershellISE = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Powerhsell ISE" -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell_ise.exe"
             $PowershellISE.add_Click({
-                    Start-Process powershell_ise.exe
+                    if ([System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Shift) {
+                        Start-Process "powershell_ise.exe" -Verb RunAs
+                    }
+                    else {
+                        Start-Process "powershell_ise.exe"
+                    }
                 })
 
             $PuTTy = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "PuTTy" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAYAAADE6YVjAAACW0lEQVRIS62UzWoTURTH//fmo2hWgqvaWlBCH6CKm0BKu1XBhY8gxRdwoTaJEwTTFxCsgitfoOlmIDPT1BhQ7NJFFS0qiBtX0eKkc6/nTEicTCaZtJ2zCCE59/zO51/gmFYoFHTrdWviq1wuh87vjug7Db5My7JtW8f5kg8MwzgZREBo13WRzqQjObbTxI5jQWt9OsiseIh5VKAiMDWrCcdxkoe8072qroojJA4BBH7iOT6pGrLyC5bQTRbyAxv4qy5ic/MPXq59pfYoCCGTgwhxBh11Hhl1DnOpa1gQTwfT2bBasJ3G6WaSlil96M1D6izS8iMUVRA0Hnp/8FWjStUJ9qHPKSyfz+sP+5qmAMzIz/Rw8qlYtuXD2IxHhv9uovm3oS+TT3TgrGDoEf0vh+JUKpXxEA4a9Hb1JcpEEGIYoml1Z+Q+OOsoG1sJXWooXe55L0NJ23OoFpESXZxNHeBBad0f8DjjNlFifqeG2sWQBVEeefcNVfgV0aAz8iCuw/7/fUAkZE6WcIFko+coKQsPb7xFykkhK76jVL7vDzMYJI46UkkQ8gsvsHLnHq4sZVG+ewuvGrdpa3aTg7AmcYt4e1iX2J5Yu6SyJONJVfJf+NzB8BOErGNWjg6fK6mZb7HTNE9eCd9H8FInrSb7LS8XceP6TdS361MctL/HQjesBlZXVuMWhQTQRrFYBF/03vs9bNW34iEMUNoLn8xEWF8IjwlRA0ELR+eAvE19C7bUNM1n7XZ7La58kuHxs2DZYLkOGv8mpcRjkvKu8mJbNbj4sCjGZRaWjTj/f65KYyxtPszLAAAAAElFTkSuQmCC'
@@ -719,7 +770,12 @@ $Systray_Tool_Icon.Add_Click({
 
             $Regedit = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Registry" -FilePath "$env:SystemRoot\System32\regedt32.exe"
             $Regedit.add_Click({
-                    Start-Process regedit
+                    if ([System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Shift) {
+                        Start-Process "regedit" -Verb RunAs
+                    }
+                    else {
+                        Start-Process "regedit"
+                    }
                 })
 
             $ScrollJiggler = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Scroll Jiggler" -IconBase64 $DogIcon
