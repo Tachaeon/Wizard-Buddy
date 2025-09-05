@@ -528,7 +528,7 @@ $Systray_Tool_Icon.Add_Click({
             $Base64Converter.Add_Click({
                     Start-Job -ScriptBlock {
                         Start-Process -FilePath "powershell" `
-                            -ArgumentList '-NoLogo -NoProfile -ExecutionPolicy Bypass -File "C:\Projects\Base64-Converter\Get-Base64.ps1"'
+                            -ArgumentList '-NoLogo -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\Get-Base64.ps1"'
                     }
                 })
 
