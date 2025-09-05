@@ -59,8 +59,9 @@
 - Hides the wizard sprite from the desktop while keeping tray controls available.
 
 ## 🖱️ Tray Menu
-![Tray Menu](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardRightClickTray.png)
 Right-clicking the **tray icon** itself provides a minimal menu:
+
+![Tray Menu](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardRightClickTray.png)
 -  **Help**
 -  **Exit**
 
