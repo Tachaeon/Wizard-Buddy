@@ -1,6 +1,4 @@
-#Add task scheduler
-
-$Version = "2.0"
+#Version = "2.0"
 
 [void] [System.Reflection.Assembly]::LoadWithPartialName("System.Drawing") 
 [void] [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") 
