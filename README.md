@@ -11,7 +11,7 @@
 
 ![Wizard Left Click](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardLeftClickTray.png)
 
--  **Right-click** → Opens context menus with grouped utilities.
+-  **Right-click** → Opens context menus, Help and Exit.
 
 ![Wizard Right Click Tray](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardRightClickTray.png)
 
