@@ -55,7 +55,7 @@
 - (Extensible: more PowerShell or batch scripts can be added)
 
 ### 6. Hide
-- Hides the wizard sprite from the desktop while keeping tray controls available.
+- Hides Wizard-Buddy from the desktop while keeping tray controls available.
 
 ## Other Features
 - Click and drag any .gif onto Wizard-Buddy to change it to that .gif! Even works from web browsers. (File has to be .gif)
