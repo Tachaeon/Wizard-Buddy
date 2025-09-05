@@ -78,11 +78,14 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "Base64 Converter (.jpg, .gif, .png, .exe, .zip)"
+$form.Text = "Base64 Converter"
 $form.Size = New-Object System.Drawing.Size(290, 150)
 $form.Icon = [System.Drawing.Icon]::FromHandle((New-Object System.Drawing.Bitmap -Argument $ims).GetHIcon())
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
+$Form.BackColor = [System.Drawing.Color]::FromArgb(0, 48, 73)
+$form.ShowinTaskbar = $false
+$form.ForeColor = 'White'
 
 $dropPanel = New-Object System.Windows.Forms.Panel
 $dropPanel.Location = New-Object System.Drawing.Point(10, 10)
@@ -93,6 +96,7 @@ $dropPanel.BorderStyle = 'FixedSingle'
 $dropPanelText = New-Object System.Windows.Forms.Label
 $dropPanelText.Text = "Drag and Drop File Here"
 $dropPanelText.AutoSize = $true
+$dropPanelText.ForeColor = [System.Drawing.Color]::FromArgb(0, 48, 73)
 $dropPanelText.Location = New-Object System.Drawing.Point(70, 20)
 $dropPanel.Controls.Add($dropPanelText)
 $form.Controls.Add($dropPanel)
