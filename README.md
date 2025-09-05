@@ -22,12 +22,11 @@
 ### 2. Applications
 ![Applications Menu](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardRightClickContextMenuApps.png)
 
-- A toolbox of elevated/admin apps and utilities:
+- A toolbox of apps and utilities:
 - Command Prompt, PowerShell, PowerShell 7, PowerShell ISE
 - Computer Management, Group Policy Update, Hyper-V Manager, MMC, Network Connections
 - Password Generator, Base64 Wizard, Click Paste, Scroll Jiggler
 - Registry, System Properties, Task Manager, Task Scheduler, Windows Sandbox
-- Elevated Applications (special category)
 
 ### 3. Customize Windows
 ![Customize Windows Menu](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardRightClickContextMenuCustWin.png)
