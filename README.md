@@ -58,13 +58,6 @@
 ### 6. Hide
 - Hides the wizard sprite from the desktop while keeping tray controls available.
 
-## 🖱️ Tray Menu
-Right-clicking the **tray icon** itself provides a minimal menu:
-
-![Tray Menu](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardRightClickTray.png)
--  **Help**
--  **Exit**
-
 ## Other Features
 - Click and drag any .gif onto Wizard-Buddy to change it to that .gif! Even works from web browsers. (File has to be .gif)
 - Shift + Left Click on most Applications to run them in Administrator context.
