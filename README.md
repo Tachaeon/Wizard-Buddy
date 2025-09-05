@@ -1,15 +1,16 @@
 
 # Wizard-Buddy Tray Application
-- A pixel wizard lives in the Windows system tray (bottom right). 
+- A pixel wizard lives in the Windows system tray (bottom right).
+
 ![Wizard Tray Icon](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardTray.png)
 
 - Interaction:
 -  **Left-click** → Shows Wizard-Buddy on the desktop.
+
 ![Wizard Left Click](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardLeftClickTray.png)
 -  **Right-click** → Opens context menus, Help and Exit.
-![Wizard Right Click Tray](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardRightClickTray.png)
 
----
+![Wizard Right Click Tray](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardRightClickTray.png)
 
 ## 📂 Context Menu Categories
 ### 1. Buddies
@@ -27,8 +28,6 @@
 - Password Generator, Base64 Wizard, Click Paste, Scroll Jiggler
 - Registry, System Properties, Task Manager, Task Scheduler, Windows Sandbox
 - Elevated Applications (special category)
-
-  
 
 ### 3. Customize Windows
 ![Customize Windows Menu](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardRightClickContextMenuCustWin.png)
@@ -49,8 +48,6 @@
 - Active Directory, RSAT Tools, Group Policy
 - PowerShell 7, PuTTY, Sandbox, Click Paste
 
-  
-
 ### 5. Scripts
 ![Scripts Menu](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardRightClickContextMenuScripts.png)
 - Networking and utility scripts:
@@ -61,15 +58,11 @@
 ### 6. Hide
 - Hides the wizard sprite from the desktop while keeping tray controls available.
 
----
-
 ## 🖱️ Tray Menu
 ![Tray Menu](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardRightClickTray.png)
 Right-clicking the **tray icon** itself provides a minimal menu:
 -  **Help**
 -  **Exit**
-
----
 
 ## Other Features
 - Click and drag any .gif onto Wizard-Buddy to change it to that .gif! Even works from web browsers. (File has to be .gif)
