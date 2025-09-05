@@ -1,3 +1,5 @@
+#Add task scheduler
+
 $Version = "2.0"
 
 [void] [System.Reflection.Assembly]::LoadWithPartialName("System.Drawing") 
@@ -576,6 +578,37 @@ $Systray_Tool_Icon.Add_Click({
                     }
                 })
 
+            $HyperV_Mgr = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Hyper V Manager" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAADsElEQVRIS7WWaUhUURTH/++90cosAhOyLxkUZH4oUCIq1DSdNoqKSJM2s6yIyIwWbS+qL20QUaEV7djillYUki1YiFGQlablFzO1qHRa1HnzOue9d+eNadMQdOHOneXe/++c/z3nMRL+85B80R9W9X5drQsHeG+ojIr68MFjfDnHe/4ICH7VuKjFqZ3xJhRukz5UhYWEeNvTBRD6sjGnXtVSfIpO4130oqrAVwcQM7LHYPUv066UaPYpCZj9rtknbaguQ7T1G/CzHXA6gaSoPwNSLxdq9ml22GQJNkmCvyTDXtvUFeZiURJs/W6JchYavfBM/gsgO68IaGpAUUkBFIIoFE+lKiGzshZoY9EOsoMi1egHIaqvBHbRuiDGewYJUxOgUAZ96MDUjJ1A9XPsLbmBzOInRibCc3fUprAOoLkozjeAsKmCgu2vyFh3gwCeVvAHjpiFRfQMWBLvHZBd+Qp4+xoF507o98AAf1lGpg4wfRaW8MqiPPk9V1LqZN8zmLn9IMGqsSv7GLbdfmoCTDERvQC4SJyrKm2a74DyDg29yR49g8Jyywrhtx45TY587OhupZ0yyK//qeDgNncnc5kGBg3E4fOXET9iKCJWrrIA+Y+6+x0Z7r1fPrcCLV+AOWPJbBp6H1AVyVRFDztceH73PkqLizF+VBgeBYeZGZieU/RX502EP9Wxn6RgiuiXL9R4H78C7dR4XBRsXXK0BRBlyoBeZI3bomtlxmbhOfmdmxSHp1U12J+VhX1F+djMpSwqzfNuFsZagEkJcUjcsg9yfQ02XDxnAXJLTXETQoAJdeVYv2snWqjpSp+9wKWGH2ZFmVny3XBTptg9LKJHxYN2Vb/YgTKwKXM3UEelO3f5bwAVDxJj8SkgAMsOZSPU1omKIRHWHiHuJAhVlnUHHgB/vYLomcRVdOGWYRGXor6qkKufISdrLer6DYBEnu++Q6WsC5vT2Wk8AFfPsgBKbKzuPYt2AZwtdgsbECeeLJ2BS6qMQJsNezZuB8bFG4JsC68CkD7PABxudJStvZAXtWbxnO6A0wVG+hwdZ0Ajb/lszFqRji3HjqAXdfLWa/e6incSBHQmY74B8BxBx69rnxzfsCMtEZF+MqafuG6Ic2PxoENX2tq18k4X+toUBCgKNp+/6RE52SNGTwBPWODRXM1BF4/o4X0RGUnPbGOsaHZoASTuBnCWwiIPcXcne2/Lnn/d+KbpVk7ZY3tW0nSkn7xq2EcR/77bp38V/xKAOPMLKdEgN0nrvccAAAAASUVORK5CYII='
+            $HyperV_Mgr.add_Click({
+                    $Filename = "C:\Windows\System32\virtmgmt.msc"
+                    If (Test-Path -Path $FileName) {
+                        $startParams = @{
+                            FilePath     = 'C:\Windows\System32\mmc.exe'
+                            ArgumentList = $Filename
+                            PassThru     = $true
+                        }
+                        Start-Process @startParams -Verb RunAs
+                    }
+                    else {
+                        $Continue = [System.Windows.MessageBox]::Show("Do you want to install Hyper-V?", "Hyper-V", 'YesNo', 'Warning')
+                        if ($Continue -eq 'Yes') {
+                            $startParams = @{
+                                FilePath     = 'powershell.exe'
+                                ArgumentList = '-NoExit', '-Command', 'Enable-WindowsOptionalFeature', '-FeatureName "Microsoft-Hyper-V-All"', '-All', '-Online'
+                                PassThru     = $true
+                                Wait         = $true
+                            }
+                            Start-Process @startParams -Verb Runas
+                        }
+                        $startParams = @{
+                            FilePath     = 'C:\Windows\System32\mmc.exe'
+                            ArgumentList = $Filename
+                            PassThru     = $true
+                        }
+                        Start-Process @startParams -Verb RunAs
+                    }
+                })
+
             $MMC = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "MMC" -FilePath "$env:SystemRoot\System32\mmc.exe"
             $MMC.add_Click({
                     if ([System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Shift) {
@@ -853,6 +886,31 @@ $Systray_Tool_Icon.Add_Click({
                         # Run the form
                         [void]$form.ShowDialog()
                     } -ArgumentList $DogIcon
+                })
+
+            $Sys_Prop = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "System Properties" -FilePath "$env:SystemRoot\System32\sysdm.cpl"
+            $Sys_Prop.add_Click({ 
+                    Start-Process "sysdm.cpl"
+                })
+
+            $Task_Mgr = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Task Manager" -FilePath "$env:SystemRoot\System32\Taskmgr.exe"
+            $Task_Mgr.add_Click({ 
+                    if ([System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Shift) {
+                        Start-Process "Taskmgr.exe" -Verb RunAs
+                    }
+                    else {
+                        Start-Process "Taskmgr.exe"
+                    }
+                })
+
+            $Task_Sched = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Task Scheduler" -FilePath "$env:SystemRoot\System32\taskschd.msc"
+            $Task_Sched.add_Click({
+                    if ([System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Shift) {
+                        Start-Process "taskschd.msc" -Verb RunAs
+                    }
+                    else {
+                        Start-Process "taskschd.msc"
+                    }
                 })
 
             $Sandbox = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Windows Sandbox" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAADG0lEQVRIS9VUzYtOURh/nvPO+CgbZEc21hbY+IjJKJFENmShFKWmZiWxtPFfKImahrKYhWEWlIWUUkYj2dlIWDDe+957zzmP3++ce9+Y780Ut9733nvueX5fz3Ovyiofusr48u8QbDh3P4a61FhV4qtawuORFYlbdtP682PmxEyDl+hL9WUloQ7GJRG1MDnilop5UYJ1Fx5FtVo1RNPoVS1ahANfegt1DcyYa82ZWdT4dHRBrHmLgxcnzEWP+iAaanHQKrFSF0lQaahK8TWeG8BVYSSdcJv+ZC5Rn6Bz6QmUAhRAGmucoT6ReEtOQBqZPX+eDjJ4QocMHIojryE6mxpN0aleeQ5/Xp0FQSWAvbiIbaHCmU5KqMd93cPlL/CBoAaKG0B1Bw8ALE4iCJNaZcfIwp/Dw8tTUBixBSshK3UGIgAlJ3UhVhWy6dRpgTkKT8eXO7dFOmsbIoBKh6x4jtZxH1xgBFSHPwIdAT67NYFnuAA48xbfVVcVtvH4MRRECRicEGICZyoQKs6pfL13F0Rr4AOOQIKGKZTI1htXDaGoHv7A+LIqFr64+QBxdHXzkYNCJcSM+EMrUJcJ6ILgrtOQ4f772BjwB2Xb9WvikWxA4snH0PuEz1lhj3LPcLydnAGggiAJEraBFWm35uvkgulrlC27dgqHixOMOUjCCKWHSICbPBF9RcZikr56+AYnZsucc+9YwNiQsWwf2k1go2q85EpwknCbc+AemkFUfxIQBFh9M7zA0svx19DKUWBplB3De5LiBNwqB1GNaDAnyeMAB40OMO4obgQyqmwmE9EJU8ACAYtCBF+LDBwAWGLQSNCQMc4UD/YPkiAnLnLgXW42pKObzXqjvh2AEtaLnljRBShE8X1LwBRIYHSS6rm/ezZ3c96ngkTtsOSXMg8Az1VPdLabSBIoJ8WzHfwA8POHfT/OtGOShS/6sds/3ThqRpjOeiSYBUHZqKVqkPD4djKFOe9YlKDduY9ETYOoHA6sB4LUSJB/PvG34rkMyxK0BXunLaLB+hMEjOrT0aWB27oVEyxkfyVr/z/BbznHFVQo2fguAAAAAElFTkSuQmCC'
