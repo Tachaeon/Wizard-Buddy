@@ -1,12 +1,6 @@
 
 # Wizard-Buddy Tray Application
 
-  
-
-## 🧙 Wizard Icon in Tray
-
-  
-
 - A pixel wizard lives in the Windows system tray (bottom right). 
 
 ![Wizard Tray Icon](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardTray.png)
