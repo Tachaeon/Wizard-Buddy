@@ -808,6 +808,7 @@ $Systray_Tool_Icon.Add_Click({
                         $Form.BackColor = [System.Drawing.Color]::FromArgb(0, 48, 73)
                         $form.MaximizeBox = $false
                         $form.ShowinTaskbar = $false
+                        $form.TopMost = $true
 
                         # Add Start/Stop Button
                         $button = New-Object System.Windows.Forms.Button
@@ -817,44 +818,35 @@ $Systray_Tool_Icon.Add_Click({
                         $button.BackColor = 'LightGreen'
                         $form.Controls.Add($button)
 
-                        # Global job reference and state
-                        $jiggling = $false
-                        $script:job = $null
+                        # Create the timer
+                        $timer = New-Object System.Windows.Forms.Timer
+                        $timer.Interval = 60000  # 60 seconds
 
-                        # Button click logic
+                        $timer.Add_Tick({
+                                $wshell = New-Object -ComObject WScript.Shell
+                                $wshell.SendKeys("{SCROLLLOCK}")
+                                Start-Sleep -Milliseconds 100
+                                $wshell.SendKeys("{SCROLLLOCK}")
+                            })
+
+                        # Toggle color on click
                         $button.Add_Click({
-                                if (-not $jiggling) {
-                                    $jiggling = $true
+                                if ($button.BackColor -eq 'LightGreen') {
                                     $button.Text = "Stop"
-                                    $button.BackColor = 'Tomato'  # Red color
-
-                                    $script:job = Start-Job {
-                                        $wshell = New-Object -ComObject WScript.Shell
-                                        while ($true) {
-                                            $wshell.SendKeys("{SCROLLLOCK}")
-                                            Start-Sleep -Milliseconds 100
-                                            $wshell.SendKeys("{SCROLLLOCK}")
-                                            Start-Sleep -Seconds 60
-                                        }
-                                    }
+                                    $button.BackColor = 'Tomato'
+                                    $timer.Start()
                                 }
                                 else {
-                                    $jiggling = $false
                                     $button.Text = "Start"
-                                    $button.BackColor = 'LightGreen'  # Green color
-
-                                    if ($script:job -and ($script:job.State -eq 'Running')) {
-                                        Stop-Job $script:job | Out-Null
-                                        Remove-Job $script:job | Out-Null
-                                    }
+                                    $button.BackColor = 'LightGreen'
+                                    $timer.Stop()
                                 }
                             })
 
                         # Cleanup when the form is closed
                         $form.add_FormClosing({
-                                if ($script:job -and ($script:job.State -eq 'Running')) {
-                                    Stop-Job $script:job | Out-Null
-                                    Remove-Job $script:job | Out-Null
+                                if ($timer.Enabled) {
+                                    $timer.Stop()
                                 }
                             })
 
