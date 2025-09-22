@@ -232,6 +232,7 @@ function Load-GifFromURL {
 #endregion
 
 $DogIcon = 'iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAEG0lEQVRoQ9WZTWgTQRTH5yVpI21B8AOttKBSQRRqYgTRg+i19GqhNC14KnjWU0EEsQfBowe92UTBeBTrTQ8eRAptEKQHLQpGK0Kh4EfZtpvx7SYbdzfzPVutc0qyM+/9fzNv3rydANmiRks5CuNVCJtn/WbrPuLA1lgw3hPqfQ4D0LuFLtLl/oz/buszcYBAfBvAzGA3gdSPpuBfCNdtK973kYSRSJjMDmRh6L1DKQEA4q9EvCHkTQSYSsJ34gBJiNKxkRgALRcuE+reSTrGZTCJAITjPnAYz0CtDV7OfcfA6vG/L1XTcJ3UZSJFz60BWOJ5ELSc+4ri98UF8WBVwKwAROJZoaQDqyLeOgslCYA5ax6KCwVV4a1V1h3QiuVS7ht+3iuMz9BJTB8WjhLXXVTtr6rLOIRksx8PIVrOfyGU9oqFpaZhfF7rfFAGoDP5UwToXLDhtAGa5YVsZnU3tDpArL7BjFLHjCIcH6mF/iUAq77B4qwDi7N11ZhGG7ew79V/sgK8MlgYRlgHQbGaCguWhh1jjBRY1kH03CvYiBdKjMaKZRmAyfuD0h6g5dN9hDqffJ3ZIxkYeey20mmlsJM47mqEIbuRhZG3beGF++YJ7pth3qSwAFgHYni8FIAzazV01m+yerxV4Im3AsAZc3DGOplCUx15GJurGkJ4q9nnjwV4iSfwOZYd+qhwgay7z0WpVbgCujFrAmM7hgtAKxfTxHm3KXOge/AIk0LbWQGLML5wTJiqeQ9pKb9MCN0vA8Dn9xBiUqEftwstD2KSSDWSRHtbR/tZ7sbnA+Q28FlGRZjtKtiEKj+EyrkPuIEPqgBgn2WEOKDYN9JNJr6x0ckrPBTPsuxbbeKwQZNVQPEO2mBnuZhanv1EAEzEe/qUZr8JsoUAsISZYkA3fDBJnEAE1XNkDQG6tENIYZbqaDgdNkwrZ3YRZ20l5qytn4LtPyZ29+6AoWdeuLU1aSkhcqRbsLWVCy/OZ0ht1ct2wmZ8EkdmNnbI6Ir3bdF6D0y88S94g0Yf5CdInd4XESQCIJsl1ZDggHslOTMaZAlCKYQUxc9jv7ysL/fGjvXKCXAbC70rwtWROVR9rpwSY+8Tcfu0dHKSZNKzMDrHKy0iQxJZAWXxTdeysFCdNK+fNYCu+IY4WMGzY4+OUF5fKwAz8YGU1BReYk3bQhgBoHDvesS7JrFrGTIMo9WnNka0AexmnSEVsv1QfF0zhdACQPEldFQ0dcaN49jfsTr2dQGYf9rpOEwaYtsAkE1yCC5VP+pOxvYBSMENGFu49t8CmB5ueitQOd5JnA5mXa47c/H+fwXAc6ryv4ABzGcEaNzUaTatFQhsYzrllr+a/v3uprPvjzVxGAKJplUgNbz+YF764sot4TXN4bA/G+GBnd/2jblAobJvMgAAAABJRU5ErkJggg=='
+$SandboxIcon = 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAADG0lEQVRIS9VUzYtOURh/nvPO+CgbZEc21hbY+IjJKJFENmShFKWmZiWxtPFfKImahrKYhWEWlIWUUkYj2dlIWDDe+957zzmP3++ce9+Y780Ut9733nvueX5fz3Ovyiofusr48u8QbDh3P4a61FhV4qtawuORFYlbdtP682PmxEyDl+hL9WUloQ7GJRG1MDnilop5UYJ1Fx5FtVo1RNPoVS1ahANfegt1DcyYa82ZWdT4dHRBrHmLgxcnzEWP+iAaanHQKrFSF0lQaahK8TWeG8BVYSSdcJv+ZC5Rn6Bz6QmUAhRAGmucoT6ReEtOQBqZPX+eDjJ4QocMHIojryE6mxpN0aleeQ5/Xp0FQSWAvbiIbaHCmU5KqMd93cPlL/CBoAaKG0B1Bw8ALE4iCJNaZcfIwp/Dw8tTUBixBSshK3UGIgAlJ3UhVhWy6dRpgTkKT8eXO7dFOmsbIoBKh6x4jtZxH1xgBFSHPwIdAT67NYFnuAA48xbfVVcVtvH4MRRECRicEGICZyoQKs6pfL13F0Rr4AOOQIKGKZTI1htXDaGoHv7A+LIqFr64+QBxdHXzkYNCJcSM+EMrUJcJ6ILgrtOQ4f772BjwB2Xb9WvikWxA4snH0PuEz1lhj3LPcLydnAGggiAJEraBFWm35uvkgulrlC27dgqHixOMOUjCCKWHSICbPBF9RcZikr56+AYnZsucc+9YwNiQsWwf2k1go2q85EpwknCbc+AemkFUfxIQBFh9M7zA0svx19DKUWBplB3De5LiBNwqB1GNaDAnyeMAB40OMO4obgQyqmwmE9EJU8ACAYtCBF+LDBwAWGLQSNCQMc4UD/YPkiAnLnLgXW42pKObzXqjvh2AEtaLnljRBShE8X1LwBRIYHSS6rm/ezZ3c96ngkTtsOSXMg8Az1VPdLabSBIoJ8WzHfwA8POHfT/OtGOShS/6sds/3ThqRpjOeiSYBUHZqKVqkPD4djKFOe9YlKDduY9ETYOoHA6sB4LUSJB/PvG34rkMyxK0BXunLaLB+hMEjOrT0aWB27oVEyxkfyVr/z/BbznHFVQo2fguAAAAAElFTkSuQmCC'
 $Systray_Tool_Icon = New-Object System.Windows.Forms.NotifyIcon
 $Systray_Tool_Icon.Text = "Wizard Buddy"
 $contextmenu = New-Object System.Windows.Forms.ContextMenuStrip
@@ -888,7 +889,7 @@ $Systray_Tool_Icon.Add_Click({
                     }
                 })
 
-            $Sandbox = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Windows Sandbox" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAADG0lEQVRIS9VUzYtOURh/nvPO+CgbZEc21hbY+IjJKJFENmShFKWmZiWxtPFfKImahrKYhWEWlIWUUkYj2dlIWDDe+957zzmP3++ce9+Y780Ut9733nvueX5fz3Ovyiofusr48u8QbDh3P4a61FhV4qtawuORFYlbdtP682PmxEyDl+hL9WUloQ7GJRG1MDnilop5UYJ1Fx5FtVo1RNPoVS1ahANfegt1DcyYa82ZWdT4dHRBrHmLgxcnzEWP+iAaanHQKrFSF0lQaahK8TWeG8BVYSSdcJv+ZC5Rn6Bz6QmUAhRAGmucoT6ReEtOQBqZPX+eDjJ4QocMHIojryE6mxpN0aleeQ5/Xp0FQSWAvbiIbaHCmU5KqMd93cPlL/CBoAaKG0B1Bw8ALE4iCJNaZcfIwp/Dw8tTUBixBSshK3UGIgAlJ3UhVhWy6dRpgTkKT8eXO7dFOmsbIoBKh6x4jtZxH1xgBFSHPwIdAT67NYFnuAA48xbfVVcVtvH4MRRECRicEGICZyoQKs6pfL13F0Rr4AOOQIKGKZTI1htXDaGoHv7A+LIqFr64+QBxdHXzkYNCJcSM+EMrUJcJ6ILgrtOQ4f772BjwB2Xb9WvikWxA4snH0PuEz1lhj3LPcLydnAGggiAJEraBFWm35uvkgulrlC27dgqHixOMOUjCCKWHSICbPBF9RcZikr56+AYnZsucc+9YwNiQsWwf2k1go2q85EpwknCbc+AemkFUfxIQBFh9M7zA0svx19DKUWBplB3De5LiBNwqB1GNaDAnyeMAB40OMO4obgQyqmwmE9EJU8ACAYtCBF+LDBwAWGLQSNCQMc4UD/YPkiAnLnLgXW42pKObzXqjvh2AEtaLnljRBShE8X1LwBRIYHSS6rm/ezZ3c96ngkTtsOSXMg8Az1VPdLabSBIoJ8WzHfwA8POHfT/OtGOShS/6sds/3ThqRpjOeiSYBUHZqKVqkPD4djKFOe9YlKDduY9ETYOoHA6sB4LUSJB/PvG34rkMyxK0BXunLaLB+hMEjOrT0aWB27oVEyxkfyVr/z/BbznHFVQo2fguAAAAAElFTkSuQmCC'
+            $Sandbox = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Windows Sandbox" -IconBase64 $SandboxIcon
             $Sandbox.add_Click({
                     $Filename = "C:\Windows\System32\WindowsSandbox.exe"
                     If (Test-Path -Path $FileName) {
@@ -1064,7 +1065,7 @@ $Systray_Tool_Icon.Add_Click({
                     Install-Application -AppID "Microsoft.VisualStudioCode"
                 })
 
-            $SandboxInstall = Add-SubMenuItem -ParentMenuItem $InstallMenu -Text "Sandbox" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAADG0lEQVRIS9VUzYtOURh/nvPO+CgbZEc21hbY+IjJKJFENmShFKWmZiWxtPFfKImahrKYhWEWlIWUUkYj2dlIWDDe+957zzmP3++ce9+Y780Ut9733nvueX5fz3Ovyiofusr48u8QbDh3P4a61FhV4qtawuORFYlbdtP682PmxEyDl+hL9WUloQ7GJRG1MDnilop5UYJ1Fx5FtVo1RNPoVS1ahANfegt1DcyYa82ZWdT4dHRBrHmLgxcnzEWP+iAaanHQKrFSF0lQaahK8TWeG8BVYSSdcJv+ZC5Rn6Bz6QmUAhRAGmucoT6ReEtOQBqZPX+eDjJ4QocMHIojryE6mxpN0aleeQ5/Xp0FQSWAvbiIbaHCmU5KqMd93cPlL/CBoAaKG0B1Bw8ALE4iCJNaZcfIwp/Dw8tTUBixBSshK3UGIgAlJ3UhVhWy6dRpgTkKT8eXO7dFOmsbIoBKh6x4jtZxH1xgBFSHPwIdAT67NYFnuAA48xbfVVcVtvH4MRRECRicEGICZyoQKs6pfL13F0Rr4AOOQIKGKZTI1htXDaGoHv7A+LIqFr64+QBxdHXzkYNCJcSM+EMrUJcJ6ILgrtOQ4f772BjwB2Xb9WvikWxA4snH0PuEz1lhj3LPcLydnAGggiAJEraBFWm35uvkgulrlC27dgqHixOMOUjCCKWHSICbPBF9RcZikr56+AYnZsucc+9YwNiQsWwf2k1go2q85EpwknCbc+AemkFUfxIQBFh9M7zA0svx19DKUWBplB3De5LiBNwqB1GNaDAnyeMAB40OMO4obgQyqmwmE9EJU8ACAYtCBF+LDBwAWGLQSNCQMc4UD/YPkiAnLnLgXW42pKObzXqjvh2AEtaLnljRBShE8X1LwBRIYHSS6rm/ezZ3c96ngkTtsOSXMg8Az1VPdLabSBIoJ8WzHfwA8POHfT/OtGOShS/6sds/3ThqRpjOeiSYBUHZqKVqkPD4djKFOe9YlKDduY9ETYOoHA6sB4LUSJB/PvG34rkMyxK0BXunLaLB+hMEjOrT0aWB27oVEyxkfyVr/z/BbznHFVQo2fguAAAAAElFTkSuQmCC'
+            $SandboxInstall = Add-SubMenuItem -ParentMenuItem $InstallMenu -Text "Sandbox" -IconBase64 $SandboxIcon
             $SandboxInstall.add_Click({
                     $startParams = @{
                         FilePath     = 'powershell.exe'
@@ -1082,6 +1083,98 @@ $Systray_Tool_Icon.Add_Click({
 
             #region Scripts
             $ScriptsMenu = Add-MenuItem -Menu $ContextMenu -Text "Scripts" -IconBase64 $DogIcon
+
+            $WSProxy = Add-SubMenuItem -ParentMenuItem $ScriptsMenu -Text "Windows Sandbox Proxy" -IconBase64 $SandboxIcon
+            $WSProxy.add_Click({
+                    [void] [System.Reflection.Assembly]::LoadWithPartialName("PresentationFramework")
+
+                    function Proxy {
+                        #Create Directory if not there
+                        $Directory = "C:\Install\SandboxScripts"
+                        If (-Not(Test-Path -Path $Directory)) {     
+                            New-Item -Path "C:\Install" -Name "SandboxScripts" -ItemType "directory"
+                        }
+
+                        #Create Get-CCProxy.ps1
+                        $Script = "$Directory\Get-CCProxy.ps1"
+                        $TestScriptPath = Test-Path $Script
+                        if (!($TestScriptPath)) {
+                            "####Download File####"                                                                     | Out-File -FilePath $Script -Append
+                            "`$ProgressPreference = 'SilentlyContinue'"                                                 | Out-File -FilePath $Script -Append
+                            "`$Filename = `"ccproxysetup.exe`""                                                         | Out-File -FilePath $Script -Append
+                            "`$WebClient = New-Object System.Net.WebClient"                                             | Out-File -FilePath $Script -Append
+                            "`$URL = 'https://update.youngzsoft.com/ccproxy/update/ccproxysetup.exe'"                   | Out-File -FilePath $Script -Append
+                            "`$File = `"`$env:TEMP\`$Filename`""                                                        | Out-File -FilePath $Script -Append
+                            ""                                                                                          | Out-File -FilePath $Script -Append
+                            "#Download File"                                                                            | Out-File -FilePath $Script -Append
+                            "`$WebClient.DownloadFile(`$URL, `$File)"                                                   | Out-File -FilePath $Script -Append
+                            ""                                                                                          | Out-File -FilePath $Script -Append
+                            "#Install File"                                                                             | Out-File -FilePath $Script -Append
+                            "`$startParams = @{"                                                                        | Out-File -FilePath $Script -Append
+                            "FilePath     = `"`$env:TEMP\`$Filename`""                                                  | Out-File -FilePath $Script -Append
+                            "ArgumentList = '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-'"                   | Out-File -FilePath $Script -Append
+                            "Wait         = `$true"                                                                     | Out-File -FilePath $Script -Append
+                            "PassThru     = `$true"                                                                     | Out-File -FilePath $Script -Append
+                            "}"                                                                                         | Out-File -FilePath $Script -Append
+                            "Start-Process @startParams"                                                                | Out-File -FilePath $Script -Append
+                            ""                                                                                          | Out-File -FilePath $Script -Append
+                            "#Get Sandbox IP Address"                                                                   | Out-File -FilePath $Script -Append
+                            "(Get-NetIPAddress | Where-Object IPAddress -Like `"172.31.*`").IPAddress | Set-Clipboard"  | Out-File -FilePath $Script -Append
+                        }
+
+                        #Create Proxy.wsb
+                        $WSB = "$Directory\Proxy.wsb"
+                        $TestWSBPath = Test-Path $WSB
+                        if (!($TestWSBPath)) {
+                            "<Configuration>"                                                                                                                           | Out-File -FilePath $WSB -Append
+                            "  <vGpu>Disable</vGpu>"                                                                                                                    | Out-File -FilePath $WSB -Append
+                            "  <MemoryInMB>2048</MemoryInMB>"                                                                                                           | Out-File -FilePath $WSB -Append
+                            "  <MappedFolders>"                                                                                                                         | Out-File -FilePath $WSB -Append
+                            "    <MappedFolder>"                                                                                                                        | Out-File -FilePath $WSB -Append
+                            "      <HostFolder>C:\Install\SandboxScripts</HostFolder>"                                                                                  | Out-File -FilePath $WSB -Append
+                            "      <SandboxFolder>C:\Users\WDAGUtilityAccount\Downloads</SandboxFolder>"                                                                | Out-File -FilePath $WSB -Append
+                            "      <ReadOnly>false</ReadOnly>"                                                                                                          | Out-File -FilePath $WSB -Append
+                            "    </MappedFolder>"                                                                                                                       | Out-File -FilePath $WSB -Append
+                            "  </MappedFolders>"                                                                                                                        | Out-File -FilePath $WSB -Append
+                            "  <LogonCommand>"                                                                                                                          | Out-File -FilePath $WSB -Append
+                            "    <Command>powershell -nologo -executionpolicy bypass -noprofile -file C:\users\WDAGUtilityAccount\Downloads\Get-CCProxy.ps1</Command>"  | Out-File -FilePath $WSB -Append
+                            "  </LogonCommand>"                                                                                                                         | Out-File -FilePath $WSB -Append
+                            "</Configuration>"                                                                                                                          | Out-File -FilePath $WSB -Append
+                            Start-Process $WSB
+                        }
+                        else {
+                            Start-Process $WSB
+                        }
+
+                        #Send Toast Notification when IP is set to clipboard
+                        while ($true) {
+                            $Status = Get-Clipboard
+                            if ($Status -like "172.*") {
+                                [System.Windows.MessageBox]::Show("Your proxy IP Address is: $Status`n`nIt has been copied to your clipboard.", "Proxy IP Address", 'OK', 'Information')
+                                $StatusLoc = "$env:TEMP\$Status"
+                                Get-Clipboard | Out-File -FilePath $StatusLoc -Append
+                                Break
+                            }
+                        }
+                    }
+
+                    $Filename = "C:\Windows\System32\WindowsSandbox.exe"
+                    If (Test-Path -Path $FileName) {
+                        Proxy
+                    }
+                    else {
+                        $Continue = [System.Windows.MessageBox]::Show("Do you want to install Windows Sandbox?", "Windows Sandbox", 'YesNo', 'Warning')
+                        if ($Continue -eq 'Yes') {
+                            $startParams = @{
+                                FilePath     = 'powershell.exe'
+                                ArgumentList = '-NoExit', '-Command', 'Enable-WindowsOptionalFeature', '-FeatureName "Containers-DisposableClientVM"', '-All', '-Online'
+                                PassThru     = $true
+                            }
+                            Start-Process @startParams -Verb Runas
+                            Proxy
+                        } 
+                    }
+                })
 
             $SpeedTest = Add-SubMenuItem -ParentMenuItem $ScriptsMenu -Text "Speed Test" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAYAAADE6YVjAAABC0lEQVRIS92UOw7CMAyGW0CCCYkNcQUGxBk4TW/EhdjZmZhYYQOJ129UV47rBCWBCoFk0aTx//mVlkUHv7IDRvEzkDGyPYmMKbCHWE/wfAxVJJTJDY49w1lD+MgdD30L5oNQpFfYIALC51uaFoRLISO+ADYygGfsDet9ed7R1RBZa/KNGQyvrxTJAXCSpgZDtji1UBOUeoUkiHSXDFlhsYftYAfYLJVQ+0/xP4fReG8YIpudoe+4NprWzMc0WwdEwi1NvZECkD0wBykH8m4am/exEB01rSvY2mikA4lptK80QY3cTELi3nLFfkp8EKdf+p58A1JakFxQa+r0XKfck1DJXnqfFPUOwf9Anm20NxRL3bTtAAAAAElFTkSuQmCC'
             $SpeedTest.add_Click({
