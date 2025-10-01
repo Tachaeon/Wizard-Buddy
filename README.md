@@ -74,6 +74,7 @@ It bundles admin utilities, quick installers, scripts, and Windows tweaks into a
 | Clippy   |![Clippy](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/Gifs/Clippy.gif)         |
 | Ducky    |![Ducky](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/Gifs/Ducky.gif)         |
 | Dumpster |![Dumpster](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/Gifs/Dumpster.gif)         |
+| Link     |![Link](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/Gifs/Link.gif)         |
 | Linus    |![Linus](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/Gifs/Linus.gif)         |
 | Nyan     |![Nyan](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/Gifs/Nyan.gif)         |
 | PBJT     |![PBJT](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/Gifs/PBJT.gif)         |
