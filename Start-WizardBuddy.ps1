@@ -1632,6 +1632,13 @@ $Systray_Tool_Icon.Add_Click({
                     }
                 })
             #endregion
+            $timer = New-Object System.Windows.Forms.Timer
+            $timer.Interval = 1000
+            $timer.Add_Tick({
+                    if (-not $form.TopMost) { $form.TopMost = $true }
+                })
+            $timer.Start()
+
             $form.Add_Shown({
                     Set-FormBottomRight -f $form -screen ([System.Windows.Forms.Screen]::PrimaryScreen) -pad $margin
                 })
