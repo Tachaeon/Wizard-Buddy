@@ -1,3 +1,7 @@
+<# Create .VBS
+CreateObject("Wscript.Shell").Run _
+"powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command ""irm https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/main/Start-WizardBuddy.ps1 | iex""", 0, False
+#>
 #Version = "2.0"
 
 [void] [System.Reflection.Assembly]::LoadWithPartialName("System.Drawing") 
