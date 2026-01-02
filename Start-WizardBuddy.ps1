@@ -13,75 +13,102 @@ CreateObject("Wscript.Shell").Run _
 $margin = 12
 
 function Toast {
-    param (
-        [string]$subTitle,
-        [string]$bodText,
-        [string]$bas64Image = $null,
-        [string]$URL = $null
-    )
-    $winTitle = "Technology Notification"
-    $depAttention = "Brightway, Inc."
-    $tmpImage = "$env:TEMP\tmpImage.png"
+    $Header_type = "GIF"
+    $URL = "https://media.tenor.com/BXQgJskV7LgAAAAj/9999.gif"
 
-    # Register AppID
-    $regPath = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Notifications\Settings'
-    $app = ''
-    $appID = ""
+    # Toast information
+    $Title = "$ENV:COMPUTERNAME "
+    $Message = "Your computer name has been added to the clipboard for pasting."
+    $Advice = "-Wizard Buddy"
+    $Text_AppName = "Wizard Buddy"
 
-    # Load Namespaces
-    $null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
-    $null = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
-
-    If ($bas64Image) {
-        [byte[]]$Bytes = [convert]::FromBase64String($bas64Image)
-        [System.IO.File]::WriteAllBytes($tmpImage, $Bytes)
-    } 
-
-    if ($URL) {
-        $ProgressPreference = 'SilentlyContinue'
-        $WebClient = New-Object System.Net.WebClient
-        $WebClient.DownloadFile($URL, $tmpImage) 
-    }
-    
-    # Validate App exists in registry. If so, use ActionCenter.
-    if (!(Test-Path -Path "$regPath\$appID")) {
-        $null = New-Item -Path "$regPath\$appID" -Force
-        $null = New-ItemProperty -Path "$regPath\$appID" -Name 'ShowInActionCenter' -Value 1 -PropertyType 'DWORD'
+    If ($Header_type -eq "GIF") {
+        $HeroImage = "$env:temp\reboot.gif"		
+        Invoke-WebRequest -Uri $URL -OutFile $HeroImage -UseBasicParsing
     }
 
-    [xml]$xmlTemplate = @"
-<toast scenario="reminder">
+    Function Set_Action {
+        param(
+            $Action_Name
+        )	
+        $Main_Reg_Path = "HKCU:\SOFTWARE\Classes\$Action_Name"
+        $Command_Path = "$Main_Reg_Path\shell\open\command"
+        $CMD_Script = "C:\Windows\Temp\$Action_Name.cmd"
+        New-Item $Command_Path -Force
+        New-ItemProperty -Path $Main_Reg_Path -Name "URL Protocol" -Value "" -PropertyType String -Force | Out-Null
+        Set-ItemProperty -Path $Main_Reg_Path -Name "(Default)" -Value "URL:$Action_Name Protocol" -Force | Out-Null
+        Set-ItemProperty -Path $Command_Path -Name "(Default)" -Value $CMD_Script -Force | Out-Null
+    }
+
+    Function Register-NotificationApp($AppID, $AppDisplayName) {
+        [int]$ShowInSettings = 0
+        [int]$IconBackgroundColor = 0
+        $IconUri = "C:\Windows\ImmersiveControlPanel\images\logo.png"
+        $AppRegPath = "HKCU:\Software\Classes\AppUserModelId"
+        $RegPath = "$AppRegPath\$AppID"
+        $Notifications_Reg = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Notifications\Settings'
+        If (!(Test-Path -Path "$Notifications_Reg\$AppID")) {
+            New-Item -Path "$Notifications_Reg\$AppID" -Force
+            New-ItemProperty -Path "$Notifications_Reg\$AppID" -Name 'ShowInActionCenter' -Value 1 -PropertyType 'DWORD' -Force
+        }
+        If ((Get-ItemProperty -Path "$Notifications_Reg\$AppID" -Name 'ShowInActionCenter' -ErrorAction SilentlyContinue).ShowInActionCenter -ne '1') {
+            New-ItemProperty -Path "$Notifications_Reg\$AppID" -Name 'ShowInActionCenter' -Value 1 -PropertyType 'DWORD' -Force
+        }
+        try {
+            if (-NOT(Test-Path $RegPath)) {
+                New-Item -Path $AppRegPath -Name $AppID -Force | Out-Null
+            }
+            $DisplayName = Get-ItemProperty -Path $RegPath -Name DisplayName -ErrorAction SilentlyContinue | Select-Object -ExpandProperty DisplayName -ErrorAction SilentlyContinue
+            if ($DisplayName -ne $AppDisplayName) {
+                New-ItemProperty -Path $RegPath -Name DisplayName -Value $AppDisplayName -PropertyType String -Force | Out-Null
+            }
+            $ShowInSettingsValue = Get-ItemProperty -Path $RegPath -Name ShowInSettings -ErrorAction SilentlyContinue | Select-Object -ExpandProperty ShowInSettings -ErrorAction SilentlyContinue
+            if ($ShowInSettingsValue -ne $ShowInSettings) {
+                New-ItemProperty -Path $RegPath -Name ShowInSettings -Value $ShowInSettings -PropertyType DWORD -Force | Out-Null
+            }
+            New-ItemProperty -Path $RegPath -Name IconUri -Value $IconUri -PropertyType ExpandString -Force | Out-Null	
+            New-ItemProperty -Path $RegPath -Name IconBackgroundColor -Value $IconBackgroundColor -PropertyType ExpandString -Force | Out-Null
+        }
+        catch {
+        }
+    }
+
+    $Scenario = 'reminder'
+    [xml]$Toast = @"
+<toast scenario="$Scenario">
     <visual>
-    <binding template="ToastGeneric" activationType="protocol">
-        <text>$winTitle</text>
-        <text placement="attribution">$depAttention</text>        
+    <binding template="ToastGeneric">
+        <image placement="hero" src="$HeroImage" hint-crop="circle"/>
+        <text placement="attribution">$Attribution</text>
+        <text>$Title</text>
         <group>
             <subgroup>
-                <image src="$tmpImage"/>
-                <text hint-style="Title" hint-wrap="true" >$winTitle</text>
+                <text hint-style="body" hint-wrap="true" >$Message</text>
             </subgroup>
         </group>
-        <group>          
-            <subgroup>     
-                <text hint-style="SubTitle" hint-wrap="true" >$subTitle</text>
-            </subgroup>
-        </group>
-        <group>
-            <subgroup>     
-                <text hint-style="Body" hint-wrap="true" >$bodText</text>
-            </subgroup>
-        </group>
+		
+		<group>
+			<subgroup>
+				<text hint-style="body" hint-wrap="true" >$Advice</text>
+			</subgroup>
+		</group>
     </binding>
     </visual>
-
-    <actions>
-        <action content="Close" activationType="protocol" arguments="" />
-    </actions>
+	$Actions
 </toast>
 "@
-    $xmlToast = New-Object -TypeName Windows.Data.Xml.Dom.XmlDocument
-    $xmlToast.LoadXml($xmlTemplate.OuterXml)
-    [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($app).Show($xmlToast)
+
+    $AppID = $Text_AppName
+    $AppDisplayName = $Text_AppName
+    Register-NotificationApp -AppID $Text_AppName -AppDisplayName $Text_AppName
+
+    # Toast creation and display
+    $Load = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+    $Load = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
+    $ToastXml = New-Object -TypeName Windows.Data.Xml.Dom.XmlDocument
+    $ToastXml.LoadXml($Toast.OuterXml)
+    # Display the Toast
+    [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($AppID).Show($ToastXml)
 }
 
 function Set-FormBottomRight([System.Windows.Forms.Form]$f, [System.Windows.Forms.Screen]$screen, [int]$pad) {
@@ -455,16 +482,6 @@ $Systray_Tool_Icon.Add_Click({
             $pictureBox.ContextMenuStrip = $contextMenu
 
             #region Buddies
-            #ComputerName
-            $menuItemComputerName = Add-MenuItem -Menu $ContextMenu -Text $env:COMPUTERNAME -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAYAAADE6YVjAAABfUlEQVRIS2NkoANgpIMdDNSwpAfoUAc0x5oC+f+B+AwQm1BsSUhawX9WNjasAfL23WuGXcvmU8UnIBfjBSCfEFSEz4TWKfMZODg4sfvkwweGtpIMsE/+985ZQcgxOA3h5mBnePf6FcO/f38x1HDyCyEsAcm2FoURb9HP9wzVU3czVPXMABtCCMCD69/tZYTUIuQ/32dgMqoGWyIrLsHAwcmFVe+7D+8YilMiIMEFUkGJJZmxAVgtYWVlY/j9+xflltAluG7dusFATD6hKLhGLSGclJGSMHJw/fj6lWH9/KkMkTllYDOQyy6yixVQPkG2ZPmULoYvNTUMPC0tYItQLKGkWEG3BBYM6JaAxJdCJaOR2AzyalpRIPGHt66BKKxFArCojyImCeOMg8LmPnBQ9tcWgSisdQ96fQIKMmxxgm4JoThCsYxsS7DF0bfv3xm+//wJKnVvAF2lCXMZJTUjqG7GBp4BBf3QJLqAfCc86Z7yOp5wpsIRmcRoJEUNAKDb9Afh99TOAAAAAElFTkSuQmCC'
-            $menuItemComputerName.Add_Click({
-                    Set-Clipboard $env:computername
-                    Toast -subTitle $env:computername -bodText "Is your computer name. It has been added to the clipboard for pasting." -bas64Image "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"
-                })
-
-            #Separator
-            $Separator3 = New-Object System.Windows.Forms.ToolStripSeparator
-            $contextmenu.Items.Add($Separator3)
 
             # Create "Buddies" submenu container
             $BuddiesMenu = Add-MenuItem -Menu $ContextMenu -Text "Buddies" -IconBase64 $WizardIconBase64
@@ -1652,6 +1669,13 @@ $Systray_Tool_Icon.Add_Click({
                     Start-Process @startParams
                 })
             #endregion
+
+            #ComputerName
+            $menuItemComputerName = Add-MenuItem -Menu $ContextMenu -Text $env:COMPUTERNAME -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAYAAADE6YVjAAABfUlEQVRIS2NkoANgpIMdDNSwpAfoUAc0x5oC+f+B+AwQm1BsSUhawX9WNjasAfL23WuGXcvmU8UnIBfjBSCfEFSEz4TWKfMZODg4sfvkwweGtpIMsE/+985ZQcgxOA3h5mBnePf6FcO/f38x1HDyCyEsAcm2FoURb9HP9wzVU3czVPXMABtCCMCD69/tZYTUIuQ/32dgMqoGWyIrLsHAwcmFVe+7D+8YilMiIMEFUkGJJZmxAVgtYWVlY/j9+xflltAluG7dusFATD6hKLhGLSGclJGSMHJw/fj6lWH9/KkMkTllYDOQyy6yixVQPkG2ZPmULoYvNTUMPC0tYItQLKGkWEG3BBYM6JaAxJdCJaOR2AzyalpRIPGHt66BKKxFArCojyImCeOMg8LmPnBQ9tcWgSisdQ96fQIKMmxxgm4JoThCsYxsS7DF0bfv3xm+//wJKnVvAF2lCXMZJTUjqG7GBp4BBf3QJLqAfCc86Z7yOp5wpsIRmcRoJEUNAKDb9Afh99TOAAAAAElFTkSuQmCC'
+            $menuItemComputerName.Add_Click({
+                    Set-Clipboard $env:computername
+                    Toast
+                })
 
             #Separator
             $Separator2 = New-Object System.Windows.Forms.ToolStripSeparator
