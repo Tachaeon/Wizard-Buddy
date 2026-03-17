@@ -1,6 +1,6 @@
 <# Create .VBS
-CreateObject("Wscript.Shell").Run _
-"powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command ""irm https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/main/Start-WizardBuddy-v2.ps1 | iex""", 0, False
+CreateObject("Wscript.Shell").Run "powershell -NoProfile -ExecutionPolicy Bypass -Command ""irm https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/main/Start-WizardBuddy-v2.ps1 | iex""", 0, False
+
 #>
 #Version = "2.1"
 
