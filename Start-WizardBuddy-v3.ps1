@@ -38,9 +38,10 @@ INSTALLS (One-Click via Winget)
     VLC, Visual Studio Code, Windows Sandbox, WinDirStat
 
 SCRIPTS (Utility Scripts)
-  - Windows Sandbox Proxy - CC Proxy inside Windows Sandbox
-  - Speed Test            - Download/upload speed, latency, jitter, packet loss, IP info
-  - Ping Google           - Quick connectivity test
+  - Windows Sandbox Proxy   - CC Proxy inside Windows Sandbox
+  - Speed Test              - Download/upload speed, latency, jitter, packet loss, IP info
+  - Ping Google             - Quick connectivity test
+  - SimpleHelp Spy Detection - Monitors for excess SimpleHelp Remote Access processes
 
 CUSTOMIZE WINDOWS (Registry-Based Tweaks)
   - All of the Below      - Apply all customizations at once
@@ -1654,6 +1655,125 @@ $Systray_Tool_Icon.Add_Click({
                         PassThru     = $true
                     }
                     Start-Process @startParams
+                })
+
+            $SimpleHelpSpyDetection = Add-SubMenuItem -ParentMenuItem $ScriptsMenu -Text "SimpleHelp Spy Detection"
+            $SimpleHelpSpyDetection.add_Click({
+                    # Load Windows Forms assembly
+                    [void] [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
+                    [void] [System.Reflection.Assembly]::LoadWithPartialName("PresentationFramework")
+
+                    #Create Form
+                    $SHSDForm = New-Object Windows.Forms.Form
+                    $SHSDForm.Text = "SimpleHelp Spy Detection"
+                    $SHSDForm.Size = New-Object Drawing.Size(380, 250)
+                    $SHSDForm.StartPosition = "CenterScreen"  # Center the form on the screen
+                    $SHSDForm.FormBorderStyle = "FixedDialog"  # Prevent resizing
+                    $SHSDForm.MaximizeBox = $false  # Disable maximize button
+                    $SHSDForm.TopMost = $true
+
+                    # Set a background color for the form
+                    $Sneaky = "$env:TEMP\Logix.txt"
+                    $SneakyTest = Test-Path $Sneaky -PathType Leaf
+                    if ($SneakyTest -eq "True") {
+                        $SHSDForm.BackColor = [System.Drawing.Color]::PeachPuff
+                    }
+                    else {
+                        $SHSDForm.BackColor = [System.Drawing.Color]::Black
+                    }
+
+                    # Create a Start button
+                    $SHSDStartButton = New-Object Windows.Forms.Button
+                    $SHSDStartButton.Text = "Start"
+                    $SHSDStartButton.Size = New-Object Drawing.Size(80, 30)
+                    $SHSDStartButton.Location = New-Object Drawing.Point(50, 150)
+                    $SHSDStartButton.Font = New-Object Drawing.Font("Arial", 12, [System.Drawing.FontStyle]::Bold)
+                    $SHSDStartButton.BackColor = [System.Drawing.Color]::Green
+                    $SHSDStartButton.ForeColor = [System.Drawing.Color]::White
+                    $SHSDStartButton.Add_Click({
+                            $SHSDIndicator.BackColor = [System.Drawing.Color]::Green  # Set indicator color to green
+                            $SHSDIndicator.Text = "Started"  # Set text to "on"
+                            $SHSDIndicator.ForeColor = [System.Drawing.Color]::White
+                            $Sneaky = "$env:TEMP\Logix.txt"
+                            $SneakyTest = Test-Path $Sneaky -PathType Leaf
+                            if ($SneakyTest -eq "True") {
+                                Notepad $Sneaky
+                            }
+                            Start-Job -Name SimpHelp -ScriptBlock {
+                                $Script:Running = $true
+                                while ($Script:Running) {
+                                    $Process = "Remote Access"
+                                    $Number = @(Get-Process -ErrorAction SilentlyContinue $Process).Count
+                                    if ($Number -gt "2") {
+                                        (New-Object System.Media.SoundPlayer $(Get-ChildItem -Path "$env:windir\Media\Ring05.wav").FullName).Play()
+                                        $Sneaky = "$env:TEMP\Logix.txt"
+                                        Get-Date | Out-File $Sneaky -Append
+                                        Start-Sleep 12
+                                    }
+                                }
+                            }
+                        })
+                    $SHSDForm.Controls.Add($SHSDStartButton)
+
+                    # Create a Stop button
+                    $SHSDStopButton = New-Object Windows.Forms.Button
+                    $SHSDStopButton.Text = "Stop"
+                    $SHSDStopButton.Size = New-Object Drawing.Size(80, 30)
+                    $SHSDStopButton.Location = New-Object Drawing.Point(150, 150)
+                    $SHSDStopButton.Font = New-Object Drawing.Font("Arial", 12, [System.Drawing.FontStyle]::Bold)
+                    $SHSDStopButton.BackColor = [System.Drawing.Color]::Red
+                    $SHSDStopButton.ForeColor = [System.Drawing.Color]::White
+                    $SHSDStopButton.Add_Click({
+                            $SHSDIndicator.BackColor = [System.Drawing.Color]::Red  # Set indicator color to red
+                            $SHSDIndicator.Text = "Stopped"  # Set text to "Off"
+                            $SHSDIndicator.ForeColor = [System.Drawing.Color]::White
+                            Stop-Job -Name SimpHelp
+                            $Sneaky = "$env:TEMP\Logix.txt"
+                            $SneakyTest = Test-Path $Sneaky -PathType Leaf
+                            if ($SneakyTest -eq "True") {
+                                Notepad $Sneaky
+                            }
+                        })
+                    $SHSDForm.Controls.Add($SHSDStopButton)
+
+                    # Create a Delete button
+                    $SHSDDeleteButton = New-Object Windows.Forms.Button
+                    $SHSDDeleteButton.Text = "Delete"
+                    $SHSDDeleteButton.Size = New-Object Drawing.Size(80, 30)
+                    $SHSDDeleteButton.Location = New-Object Drawing.Point(250, 150)
+                    $SHSDDeleteButton.Font = New-Object Drawing.Font("Arial", 12, [System.Drawing.FontStyle]::Bold)
+                    $SHSDDeleteButton.BackColor = [System.Drawing.Color]::DarkBlue
+                    $SHSDDeleteButton.ForeColor = [System.Drawing.Color]::White
+                    $SHSDDeleteButton.Add_Click({
+                            $Continue = [System.Windows.MessageBox]::Show("Are you sure you want to delete the log file?", "SimpleHelp Spy Detection", 'YesNo', 'Warning')
+                            if ($Continue -eq 'Yes') {
+                                $Sneaky = "$env:TEMP\Logix.txt"
+                                $SneakyTest = Test-Path $Sneaky -PathType Leaf
+                                if ($SneakyTest -eq "True") {
+                                    Remove-Item -Path $Sneaky -Force
+                                    $SHSDForm.BackColor = [System.Drawing.Color]::Black
+                                }
+                            }
+                        })
+                    $SHSDForm.Controls.Add($SHSDDeleteButton)
+
+                    # Create an indicator label
+                    $SHSDIndicator = New-Object Windows.Forms.Label
+                    $SHSDIndicator.Size = New-Object Drawing.Size(130, 80)
+                    $SHSDIndicator.Location = New-Object Drawing.Point(125, 40)
+                    $SHSDIndicator.BorderStyle = [System.Windows.Forms.FormBorderStyle]::Fixed3D
+                    $SHSDIndicator.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter  # Center the text
+                    $SHSDIndicator.BackColor = [System.Drawing.Color]::Red  # Set indicator color to red
+                    $SHSDIndicator.Text = "Stopped"  # Set text to "Off"
+                    $SHSDIndicator.Font = New-Object Drawing.Font("Arial", 14, [System.Drawing.FontStyle]::Bold)
+                    $SHSDIndicator.ForeColor = [System.Drawing.Color]::White
+                    $SHSDForm.Controls.Add($SHSDIndicator)
+
+                    # Show the form
+                    $SHSDForm.Add_FormClosed({
+                            $SHSDForm.Dispose()
+                        })
+                    [void]($SHSDForm.ShowDialog())
                 })
             #endregion
 
