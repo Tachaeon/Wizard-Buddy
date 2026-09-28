@@ -20,7 +20,8 @@ pwsh Start-WizardBuddy-v2.ps1
 
 | File | Purpose |
 |------|---------|
-| `Start-WizardBuddy-v2.ps1` | **Active version (v2.1)** — full app with tray, context menus, all features |
+| `Start-WizardBuddy-v3.ps1` | **Active version (v3.1)**. Same app as v2.1 plus the Scripts additions (SimpleHelp Spy Detection), the toggle-based Customize Windows menu and the OpsHub-style Speed Test (see "v3.1 additions") |
+| `Start-WizardBuddy-v2.ps1` | Previous version (v2.1) |
 | `Start-WizardBuddy.ps1` | Older version (v2.0) — uses deprecated `LoadWithPartialName`; kept for reference |
 | `Base Wizard/Get-Wizard.ps1` | Minimal prototype — borderless form with a PictureBox and one GIF, no tray |
 | `ShellContextMenu.ps1` | Standalone PowerShell shell context menu helper (COM-based); v2.1 uses an embedded C# version instead |
@@ -68,3 +69,10 @@ The script body is organized into regions: `Functions` → base64 icon variables
 
 ### v2.0 → v2.1 differences
 v2.1 (`Start-WizardBuddy-v2.ps1`) adds: embedded C# `ShellContextMenu` (replaces COM-based approach), `Add-SubMenuItem`/`Add-ShiftClickHandler` helpers, `WingetCheck` bootstrap, and `Add-Type -AssemblyName` (replacing deprecated `LoadWithPartialName`).
+
+### v3.1 additions (ported from Combat-Hounds, 2026-09-28)
+The helpers are copied from `C:\Projects\Combat-Hounds\Combat-Hounds.ps1`, so a fix to one should usually go to both.
+- **Customize Windows** is table-driven: `$CustomizeRows` → `Add-TweakMenuItems`. Each tweak is a toggle: a check (refreshed from the registry on `DropDownOpening` via `Test-TweakApplied`) marks applied tweaks, and clicking a checked one undoes it (`Set-RegistryAndRestartExplorer -Undo`). Every tweak uses the cog `$SettingsIcon`; "All of the Below" keeps its own icon, covers every row without `ExcludeFromAll` (Hide Widgets is excluded), and asks before undoing. Unlike Combat-Hounds, each row is stored in the menu item's `.Tag`, because the buddy menu is rebuilt every time the buddy is shown.
+- **Speed Test** (still under Scripts) is `Show-SpeedTest`, built with `New-OpsHubWindow` (Tokyo Night, OpsHub title bar). The test runs in the background via `Start-BackgroundTask` / `Invoke-SpeedTest` (`$BackgroundFunctions` lists only `Invoke-SpeedTest`). `Show-TrayNotice` reports the result if the window was closed first.
+- The menu is built inside the tray left-click handler and the buddy is shown with `ShowDialog()`, so menu handlers can see that handler's local variables through PowerShell's dynamic scoping. Don't wrap them in `.GetNewClosure()`.
+- Known pre-existing bug: the buddy's keep-on-top `$timer` is never stopped when the buddy closes, so after Hide it throws on `$form.TopMost` every second (invisible, because the console is hidden).

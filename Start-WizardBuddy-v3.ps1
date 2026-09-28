@@ -2,7 +2,7 @@
 CreateObject("Wscript.Shell").Run "powershell -NoProfile -ExecutionPolicy Bypass -Command ""irm https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/main/Start-WizardBuddy-v3.ps1 | iex""", 0, False
 
 #>
-#Version = "3.0"
+#Version = "3.1"
 
 <#
 === Wizard Buddy v2 - Features ===
@@ -40,18 +40,28 @@ INSTALLS (One-Click via Winget)
 SCRIPTS (Utility Scripts)
   - Windows Sandbox Proxy   - CC Proxy inside Windows Sandbox
   - Speed Test              - Download/upload speed, latency, jitter, packet loss, IP info
+                              (OpsHub-style window; the test runs in the background)
   - Ping Google             - Quick connectivity test
   - SimpleHelp Spy Detection - Monitors for excess SimpleHelp Remote Access processes
 
-CUSTOMIZE WINDOWS (Registry-Based Tweaks)
-  - All of the Below      - Apply all customizations at once
-  - Dark Mode             - Toggle system dark theme
-  - Old Context Menu      - Revert to classic Windows 10 context menu
-  - Remove Search Bar     - Hide taskbar search box
-  - Remove Teams Icon     - Remove Teams from taskbar
-  - Show Hidden Extensions - Display file extensions
-  - Remove Task View      - Hide task view button
-  - Per-Display Taskbar   - Modern taskbar grouping behavior
+CUSTOMIZE WINDOWS (Registry-Based Tweaks - toggles: a check marks applied tweaks, click again to undo)
+  - All of the Below             - Apply every tweak below at once (except Hide Widgets); asks before undoing
+  - Dark Mode                    - System + app dark theme
+  - End Task in Taskbar Menu     - "End task" on taskbar right-click
+  - Explorer Opens to This PC    - File Explorer starts at This PC
+  - Hide Recycle Bin Desktop Icon
+  - Hide Task View Button
+  - Hide Widgets                 - May be blocked on newer Windows 11 builds
+  - No Bing in Start Search      - Policy key; may need admin
+  - No Start Recommendations
+  - Old Context Menu             - Classic Windows 10 context menu
+  - Per-display Taskbar Buttons  - Taskbar buttons only on the display the window is on
+  - Remove Search Bar            - Hide taskbar search box
+  - Remove Shortcut Arrows       - Needs admin
+  - Remove Teams Icon
+  - Show Clock Seconds
+  - Show Hidden Extensions       - Hidden files and file extensions
+  - Taskbar Aligned Left
 
 TECHNICAL
   - System tray integration
@@ -575,6 +585,588 @@ function Import-GifFromURL {
     }
 }
 
+# Helper: apply (or with -Undo, revert) registry tweaks, then restart Explorer so they take
+# effect. Each setting is @{ Path; Name; Value; Type } plus optional Default / UndoPath; leave
+# Name out to set the key's default value. Undo sets Default when given, otherwise deletes the
+# value (or the key: UndoPath, else Path, for key-default settings). A setting that fails
+# (e.g. HKLM without admin, or a value Windows protects) doesn't stop the rest; failures are
+# listed afterwards.
+function Set-RegistryAndRestartExplorer {
+    param (
+        [hashtable[]]$RegistrySettings,
+        [string]$Title = 'Customize Windows',
+        [switch]$Undo
+    )
+    $Failed = foreach ($setting in $RegistrySettings) {
+        try {
+            if ($Undo) {
+                if ($setting.ContainsKey('Name')) {
+                    if ($setting.ContainsKey('Default')) {
+                        if (!(Test-Path $setting.Path)) { New-Item -Path $setting.Path -Force -ErrorAction Stop | Out-Null }
+                        Set-ItemProperty -Path $setting.Path -Name $setting.Name -Value $setting.Default -Type $setting.Type -Force -ErrorAction Stop
+                    }
+                    elseif ($null -ne (Get-ItemProperty -Path $setting.Path -Name $setting.Name -ErrorAction SilentlyContinue)) {
+                        Remove-ItemProperty -Path $setting.Path -Name $setting.Name -Force -ErrorAction Stop
+                    }
+                }
+                else {
+                    $KeyPath = if ($setting.UndoPath) { $setting.UndoPath } else { $setting.Path }
+                    if (Test-Path $KeyPath) { Remove-Item -Path $KeyPath -Recurse -Force -ErrorAction Stop }
+                }
+            }
+            else {
+                if (!(Test-Path $setting.Path)) { New-Item -Path $setting.Path -Force -ErrorAction Stop | Out-Null }
+                if ($setting.ContainsKey('Name')) {
+                    Set-ItemProperty -Path $setting.Path -Name $setting.Name -Value $setting.Value -Type $setting.Type -Force -ErrorAction Stop
+                }
+                else {
+                    Set-Item -Path $setting.Path -Value $setting.Value -Force -ErrorAction Stop
+                }
+            }
+        }
+        catch {
+            "$($setting.Path)$(if ($setting.Name) { "\$($setting.Name)" })`n    $($_.Exception.Message)"
+        }
+    }
+    Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+    $Verb = if ($Undo) { 'undone' } else { 'applied' }
+    if ($Failed) {
+        $Hint = if (($RegistrySettings.Path -like 'HKLM:*') -and -not (Test-IsAdmin)) { "`n`nHKLM settings need Wizard Buddy running as administrator." } else { '' }
+        [System.Windows.Forms.MessageBox]::Show("Some settings could not be $($Verb):`n`n$($Failed -join "`n")$Hint", $Title, 'OK', 'Warning') | Out-Null
+    }
+    else {
+        Show-TrayNotice $Title "$((Get-Culture).TextInfo.ToTitleCase($Verb)). Explorer restarted."
+    }
+}
+
+# $true if the registry already holds this setting's value.
+function Test-RegistrySetting {
+    param ([hashtable]$Setting)
+    try {
+        if ($Setting.ContainsKey('Name')) {
+            $Current = (Get-ItemProperty -Path $Setting.Path -Name $Setting.Name -ErrorAction Stop).($Setting.Name)
+            return "$Current" -eq "$($Setting.Value)"
+        }
+        return (Test-Path $Setting.Path) -and ("$((Get-Item -Path $Setting.Path).GetValue(''))" -eq "$($Setting.Value)")
+    }
+    catch { return $false }
+}
+
+# $true if every setting of a tweak is already in place (drives the Customize menu checkmarks).
+function Test-TweakApplied {
+    param ([hashtable[]]$Settings)
+    foreach ($Setting in $Settings) { if (-not (Test-RegistrySetting $Setting)) { return $false } }
+    return $true
+}
+
+# Customize Windows menu: one toggle per row. Each row is @{ Text; Registry; Separator;
+# ConfirmUndo; Icon } (Registry = settings for Set-RegistryAndRestartExplorer). A check marks
+# tweaks that are already applied (re-read from the registry each time the menu opens); clicking
+# a checked tweak undoes it. The row lives in the menu item's Tag, because the buddy menu is
+# rebuilt every time the buddy is shown.
+function Add-TweakMenuItems {
+    param (
+        [System.Windows.Forms.ToolStripMenuItem]$ParentMenuItem,
+        [hashtable[]]$Rows,
+        [string]$DefaultIcon
+    )
+    foreach ($Row in $Rows) {
+        $Icon = if ($Row.Icon) { $Row.Icon } else { $DefaultIcon }
+        $Item = Add-SubMenuItem -ParentMenuItem $ParentMenuItem -Text $Row.Text -IconBase64 $Icon -AddSeparator:([bool]$Row.Separator)
+        $Item.Tag = $Row
+        $Item.add_Click({ Invoke-TweakToggle -Row $this.Tag })
+    }
+    $ParentMenuItem.DropDown.ShowCheckMargin = $true
+    $ParentMenuItem.add_DropDownOpening({
+            foreach ($Item in $this.DropDownItems) {
+                $Row = $Item.Tag
+                if ($Row -isnot [hashtable] -or -not $Row.Registry) { continue }
+                $Item.Checked = Test-TweakApplied $Row.Registry
+                $Item.ToolTipText = if ($Item.Checked) { 'Applied - click to undo' } else { 'Click to apply' }
+            }
+        })
+}
+
+function Invoke-TweakToggle {
+    param ([hashtable]$Row)
+    # Toggle: an already-applied tweak is undone.
+    $Undo = Test-TweakApplied $Row.Registry
+    if ($Undo -and $Row.ConfirmUndo) {
+        $Answer = [System.Windows.MessageBox]::Show("Everything under $($Row.Text) is already applied.`n`nUndo all of it?", $Row.Text, 'YesNo', 'Question')
+        if ($Answer -ne 'Yes') { return }
+    }
+    Set-RegistryAndRestartExplorer -RegistrySettings $Row.Registry -Title $Row.Text -Undo:$Undo
+}
+
+# Speed test: run the Ookla CLI (downloaded to %TEMP% on first use) and return parsed results.
+# Runs inside a background task. Uses a hidden process so no console window flashes up.
+function Invoke-SpeedTest {
+    $ProgressPreference = 'SilentlyContinue'
+    $exePath = "$env:TEMP\speedtest.exe"
+    if (!(Test-Path $exePath)) {
+        $zipPath = "$env:TEMP\SpeedTest.zip"
+        Invoke-WebRequest -Uri 'https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-win64.zip' -OutFile $zipPath -UseBasicParsing
+        Expand-Archive -Path $zipPath -DestinationPath $env:TEMP -Force
+        Remove-Item -Path $zipPath -Force -ErrorAction SilentlyContinue
+    }
+    $psi = [System.Diagnostics.ProcessStartInfo]::new($exePath, '--format=json --accept-license --accept-gdpr')
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $stderrTask = $proc.StandardError.ReadToEndAsync()
+    $stdout = $proc.StandardOutput.ReadToEnd()
+    $proc.WaitForExit()
+    "$stdout`n$($stderrTask.Result)" | Out-File "$env:TEMP\Last.txt" -Force
+
+    $jsonLine = $stdout -split "`r?`n" | Where-Object { $_ -like '{*' } | Select-Object -Last 1
+    $json = if ($jsonLine) { $jsonLine | ConvertFrom-Json }
+    if (-not $json -or -not $json.download) {
+        throw "Speed test did not return results (exit code $($proc.ExitCode)). Raw output: $env:TEMP\Last.txt"
+    }
+
+    return [PSCustomObject]@{
+        DownloadSpeed = [math]::Round($json.download.bandwidth / 1000000 * 8, 2)
+        UploadSpeed   = [math]::Round($json.upload.bandwidth / 1000000 * 8, 2)
+        PacketLoss    = [math]::Round($json.packetLoss)
+        ISP           = $json.isp
+        ExternalIP    = $json.interface.externalIp
+        InternalIP    = $json.interface.internalIp
+        UsedServer    = $json.server.host
+        URL           = $json.result.url
+        Jitter        = [math]::Round($json.ping.jitter)
+        Latency       = [math]::Round($json.ping.latency)
+    }
+}
+
+# Tray balloon / toast from the Wizard Buddy icon.
+function Show-TrayNotice {
+    param (
+        [string]$Title,
+        [string]$Text,
+        [System.Windows.Forms.ToolTipIcon]$Icon = 'Info'
+    )
+    $Systray_Tool_Icon.ShowBalloonTip(5000, $Title, $Text, $Icon)
+}
+
+#region Background tasks
+# Long-running work (currently the speed test) runs in its own runspace so
+# the tray menu and dialogs stay responsive. A WinForms timer on the UI thread polls for
+# completion and runs the task's -OnComplete block there, so it can safely update UI and show
+# message boxes. OnComplete gets the task object: .Result (pipeline output), .Error (message of
+# a terminating error, else $null) and .Context (whatever hashtable the caller passed).
+#
+# The runspace starts empty: it only has the functions named in $BackgroundFunctions, and
+# $ErrorActionPreference = 'Stop' so any failure ends the task and lands in .Error.
+$BackgroundFunctions = 'Invoke-SpeedTest'
+$BackgroundTasks = [System.Collections.ArrayList]::new()
+
+$BackgroundTimer = [System.Windows.Forms.Timer]::new()
+$BackgroundTimer.Interval = 500
+$BackgroundTimer.add_Tick({
+        foreach ($Task in @($BackgroundTasks | Where-Object { $_.Handle.IsCompleted })) {
+            [void]$BackgroundTasks.Remove($Task)
+            try { $Task.Result = $Task.PowerShell.EndInvoke($Task.Handle) }
+            catch {
+                # Unwrap MethodInvocationException -> ActionPreferenceStopException -> the real error.
+                $Ex = if ($_.Exception.InnerException) { $_.Exception.InnerException } else { $_.Exception }
+                $Task.Error = if ($Ex -is [System.Management.Automation.ActionPreferenceStopException] -and $Ex.ErrorRecord) {
+                    $Ex.ErrorRecord.Exception.Message
+                }
+                else { $Ex.Message }
+            }
+            $Task.PowerShell.Dispose()
+            $Task.Runspace.Dispose()
+            if ($Task.OnComplete) {
+                try { & $Task.OnComplete $Task }
+                catch { [System.Windows.Forms.MessageBox]::Show("$($Task.Name): $($_.Exception.Message)", 'Wizard Buddy', 'OK', 'Error') | Out-Null }
+            }
+        }
+        if ($BackgroundTasks.Count -eq 0) { $BackgroundTimer.Stop() }
+    })
+
+# Returns $true if the task started, $false if a task with the same name is already running.
+function Start-BackgroundTask {
+    param (
+        [string]$Name,
+        [scriptblock]$ScriptBlock,
+        [object[]]$ArgumentList = @(),
+        [hashtable]$Context = @{},
+        [scriptblock]$OnComplete
+    )
+    if ($BackgroundTasks | Where-Object { $_.Name -eq $Name }) {
+        Show-TrayNotice $Name 'Already running. You will be notified when it finishes.'
+        return $false
+    }
+    $Iss = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+    foreach ($FunctionName in $BackgroundFunctions) {
+        $Iss.Commands.Add([System.Management.Automation.Runspaces.SessionStateFunctionEntry]::new(
+                $FunctionName, (Get-Item "function:$FunctionName").Definition))
+    }
+    $Iss.Variables.Add([System.Management.Automation.Runspaces.SessionStateVariableEntry]::new('ErrorActionPreference', 'Stop', $null))
+    $Iss.Variables.Add([System.Management.Automation.Runspaces.SessionStateVariableEntry]::new('ProgressPreference', 'SilentlyContinue', $null))
+    $Runspace = [runspacefactory]::CreateRunspace($Iss)
+    $Runspace.Open()
+    $PowerShell = [PowerShell]::Create()
+    $PowerShell.Runspace = $Runspace
+    [void]$PowerShell.AddScript($ScriptBlock.ToString())
+    foreach ($Argument in $ArgumentList) { [void]$PowerShell.AddArgument($Argument) }
+    [void]$BackgroundTasks.Add([PSCustomObject]@{
+            Name       = $Name
+            PowerShell = $PowerShell
+            Runspace   = $Runspace
+            Handle     = $PowerShell.BeginInvoke()
+            Context    = $Context
+            OnComplete = $OnComplete
+            Result     = $null
+            Error      = $null
+        })
+    $BackgroundTimer.Start()
+    return $true
+}
+#endregion Background tasks
+
+# DWM rounded corners for OpsHub-style borderless windows.
+$wbDwmSig = '[DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hwnd, uint attr, ref int pvAttr, uint cbAttr);'
+try { [void](Add-Type -MemberDefinition $wbDwmSig -Name DwmApiWB -Namespace Win32WB -PassThru) } catch { }
+
+# Builds a borderless OpsHub-style window around $BodyXaml: Tokyo Night palette, badge + title
+# bar with minimize/close, drag to move, DWM rounded corners. $BodyXaml can use the palette
+# brushes (Bg, Surface, Surface2, Input, Border, Text, Muted, Accent, AccentText, Green, Red,
+# Orange) and the AccentButton style; plain Button/TextBox/PasswordBox/ProgressBar are styled
+# automatically.
+# Returns @{ Window; UI }, where UI maps every x:Name to its element.
+# Chrome handlers use $this (not captured variables), so they work after this function returns.
+function New-OpsHubWindow {
+    param (
+        [string]$Title,
+        [string]$Badge,
+        [int]$Width = 460,
+        [string]$BodyXaml
+    )
+    [xml]$Xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="$Title" Width="$Width" SizeToContent="Height"
+        ResizeMode="NoResize" WindowStyle="None" AllowsTransparency="False"
+        WindowStartupLocation="CenterScreen" FontFamily="Segoe UI" FontSize="13"
+        Background="{DynamicResource Bg}" Foreground="{DynamicResource Text}">
+    <Window.Resources>
+        <SolidColorBrush x:Key="Bg"         Color="#0f0f1a"/>
+        <SolidColorBrush x:Key="Surface"    Color="#1a1b26"/>
+        <SolidColorBrush x:Key="Surface2"   Color="#3b4261"/>
+        <SolidColorBrush x:Key="Input"      Color="#24283b"/>
+        <SolidColorBrush x:Key="Border"     Color="#3b4261"/>
+        <SolidColorBrush x:Key="Text"       Color="#c0caf5"/>
+        <SolidColorBrush x:Key="Muted"      Color="#565f89"/>
+        <SolidColorBrush x:Key="Accent"     Color="#7aa2f7"/>
+        <SolidColorBrush x:Key="AccentText" Color="#1a1b26"/>
+        <SolidColorBrush x:Key="Green"      Color="#9ece6a"/>
+        <SolidColorBrush x:Key="Red"        Color="#f7768e"/>
+        <SolidColorBrush x:Key="Orange"     Color="#ff9e64"/>
+
+        <Style x:Key="TitleButton" TargetType="Button">
+            <Setter Property="Width" Value="28"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Background" Value="{DynamicResource Surface2}"/>
+            <Setter Property="Foreground" Value="{DynamicResource Text}"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="tb" Background="{TemplateBinding Background}" CornerRadius="6">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="tb" Property="Background" Value="{DynamicResource Accent}"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="TitleCloseButton" TargetType="Button" BasedOn="{StaticResource TitleButton}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="tb" Background="{TemplateBinding Background}" CornerRadius="6">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="tb" Property="Background" Value="{DynamicResource Red}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource AccentText}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="BaseButton" TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource Surface2}"/>
+            <Setter Property="Foreground" Value="{DynamicResource Text}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource Border}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Bd" Property="Opacity" Value="0.85"/></Trigger>
+                            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Bd" Property="Opacity" Value="0.7"/></Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="Button" BasedOn="{StaticResource BaseButton}"/>
+        <Style x:Key="AccentButton" TargetType="Button" BasedOn="{StaticResource BaseButton}">
+            <Setter Property="Background" Value="{DynamicResource Accent}"/>
+            <Setter Property="Foreground" Value="{DynamicResource AccentText}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="{DynamicResource Input}"/>
+            <Setter Property="Foreground" Value="{DynamicResource Text}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource Border}"/>
+            <Setter Property="CaretBrush" Value="{DynamicResource Text}"/>
+            <Setter Property="SelectionBrush" Value="{DynamicResource Accent}"/>
+            <Setter Property="Padding" Value="6,5"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="4">
+                            <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="PasswordBox">
+            <Setter Property="Background" Value="{DynamicResource Input}"/>
+            <Setter Property="Foreground" Value="{DynamicResource Text}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource Border}"/>
+            <Setter Property="CaretBrush" Value="{DynamicResource Text}"/>
+            <Setter Property="SelectionBrush" Value="{DynamicResource Accent}"/>
+            <Setter Property="Padding" Value="6,5"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="PasswordBox">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="4">
+                            <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="ProgressBar">
+            <Setter Property="Foreground" Value="{DynamicResource Accent}"/>
+            <Setter Property="Background" Value="{DynamicResource Surface2}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource Border}"/>
+        </Style>
+    </Window.Resources>
+
+    <Border Background="{DynamicResource Bg}" CornerRadius="10" BorderBrush="{DynamicResource Border}" BorderThickness="1">
+    <DockPanel>
+        <Border x:Name="TitleBar" DockPanel.Dock="Top" Background="{DynamicResource Surface}" Padding="16,10" CornerRadius="10,10,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Background="{DynamicResource Accent}" CornerRadius="4" Margin="0,0,8,0">
+                        <TextBlock Text=" $Badge " Foreground="{DynamicResource AccentText}" FontWeight="Bold" FontSize="12" VerticalAlignment="Center"/>
+                    </Border>
+                    <TextBlock Text="$Title" FontSize="16" FontWeight="Bold" VerticalAlignment="Center"/>
+                </StackPanel>
+                <Button x:Name="TitleMinButton" Grid.Column="1" Content="_" Margin="0,0,6,0" Style="{StaticResource TitleButton}"/>
+                <Button x:Name="TitleCloseButton" Grid.Column="2" Content="X" Style="{StaticResource TitleCloseButton}"/>
+            </Grid>
+        </Border>
+        <Border DockPanel.Dock="Top" Background="{DynamicResource Border}" Height="1"/>
+        <Border Margin="12" Padding="18" CornerRadius="6" BorderThickness="1"
+                Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Border}">
+            $BodyXaml
+        </Border>
+    </DockPanel>
+    </Border>
+</Window>
+"@
+    $Window = [Windows.Markup.XamlReader]::Load([System.Xml.XmlNodeReader]::new($Xaml))
+    $UI = @{}
+    $Xaml.SelectNodes('//*[@*[local-name()="Name"]]') | ForEach-Object { $UI[$_.Name] = $Window.FindName($_.Name) }
+
+    $Window.Add_ContentRendered({
+            $Hwnd = [System.Windows.Interop.WindowInteropHelper]::new($this).Handle
+            $Round = 2; [void][Win32WB.DwmApiWB]::DwmSetWindowAttribute($Hwnd, 33, [ref]$Round, 4)
+            $NoBorder = -2; [void][Win32WB.DwmApiWB]::DwmSetWindowAttribute($Hwnd, 34, [ref]$NoBorder, 4)
+        })
+    $UI.TitleBar.Add_MouseLeftButtonDown({ [System.Windows.Window]::GetWindow($this).DragMove() })
+    $UI.TitleMinButton.Add_Click({ [System.Windows.Window]::GetWindow($this).WindowState = 'Minimized' })
+    $UI.TitleCloseButton.Add_Click({ [System.Windows.Window]::GetWindow($this).Close() })
+
+    return @{ Window = $Window; UI = $UI }
+}
+
+function Test-IsAdmin {
+    ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+# Status line for New-OpsHubWindow dialogs: expects a TextBlock named StatusText. $Color is a
+# palette key, so the text re-colors with the theme brushes.
+function Set-UIStatus {
+    param (
+        [hashtable]$UI,
+        [string]$Message,
+        [ValidateSet('Text', 'Muted', 'Red', 'Orange', 'Green')][string]$Color = 'Text'
+    )
+    $UI.StatusText.Text = $Message
+    $UI.StatusText.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, $Color)
+    $UI.StatusText.Visibility = if ($Message) { 'Visible' } else { 'Collapsed' }
+}
+
+#region Speed Test
+# OpsHub-style Speed Test window; the test itself runs in the background (Invoke-SpeedTest).
+function Show-SpeedTest {
+        $Body = @'
+<StackPanel>
+    <Grid Margin="0,0,0,12">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="12"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Border Grid.Column="0" Background="{DynamicResource Input}" CornerRadius="6" Padding="14,10">
+            <StackPanel>
+                <TextBlock Text="DOWNLOAD" Foreground="{DynamicResource Muted}" FontSize="11" FontWeight="SemiBold"/>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock x:Name="DownloadValue" Text="--" FontSize="30" FontWeight="Bold" Foreground="{DynamicResource Accent}"/>
+                    <TextBlock Text="Mbps" Foreground="{DynamicResource Muted}" VerticalAlignment="Bottom" Margin="6,0,0,7"/>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+        <Border Grid.Column="2" Background="{DynamicResource Input}" CornerRadius="6" Padding="14,10">
+            <StackPanel>
+                <TextBlock Text="UPLOAD" Foreground="{DynamicResource Muted}" FontSize="11" FontWeight="SemiBold"/>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock x:Name="UploadValue" Text="--" FontSize="30" FontWeight="Bold" Foreground="{DynamicResource Green}"/>
+                    <TextBlock Text="Mbps" Foreground="{DynamicResource Muted}" VerticalAlignment="Bottom" Margin="6,0,0,7"/>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+    </Grid>
+
+    <Grid Margin="2,0,0,14">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="16"/>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="2*"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Grid.Column="0" Text="Latency"     Foreground="{DynamicResource Muted}" Margin="0,0,10,5"/>
+        <TextBlock Grid.Row="0" Grid.Column="1" x:Name="LatencyValue" Text="--"/>
+        <TextBlock Grid.Row="1" Grid.Column="0" Text="Jitter"      Foreground="{DynamicResource Muted}" Margin="0,0,10,5"/>
+        <TextBlock Grid.Row="1" Grid.Column="1" x:Name="JitterValue" Text="--"/>
+        <TextBlock Grid.Row="2" Grid.Column="0" Text="Packet loss" Foreground="{DynamicResource Muted}" Margin="0,0,10,5"/>
+        <TextBlock Grid.Row="2" Grid.Column="1" x:Name="PacketLossValue" Text="--"/>
+
+        <TextBlock Grid.Row="0" Grid.Column="3" Text="External IP" Foreground="{DynamicResource Muted}" Margin="0,0,10,5"/>
+        <TextBlock Grid.Row="0" Grid.Column="4" x:Name="ExternalIPValue" Text="--" TextTrimming="CharacterEllipsis"/>
+        <TextBlock Grid.Row="1" Grid.Column="3" Text="Internal IP" Foreground="{DynamicResource Muted}" Margin="0,0,10,5"/>
+        <TextBlock Grid.Row="1" Grid.Column="4" x:Name="InternalIPValue" Text="--" TextTrimming="CharacterEllipsis"/>
+        <TextBlock Grid.Row="2" Grid.Column="3" Text="Server"      Foreground="{DynamicResource Muted}" Margin="0,0,10,5"/>
+        <TextBlock Grid.Row="2" Grid.Column="4" x:Name="ServerValue" Text="--" TextTrimming="CharacterEllipsis"/>
+        <TextBlock Grid.Row="3" Grid.Column="3" Text="ISP"         Foreground="{DynamicResource Muted}" Margin="0,0,10,5"/>
+        <TextBlock Grid.Row="3" Grid.Column="4" x:Name="ISPValue" Text="--" TextTrimming="CharacterEllipsis"/>
+    </Grid>
+
+    <TextBlock Text="Result URL" Foreground="{DynamicResource Muted}" Margin="0,0,0,4"/>
+    <TextBox x:Name="UrlBox" IsReadOnly="True" Margin="0,0,0,12"/>
+
+    <ProgressBar x:Name="Progress" Height="6" IsIndeterminate="True" Visibility="Collapsed" Margin="0,0,0,10"/>
+    <TextBlock x:Name="StatusText" TextWrapping="Wrap" Margin="0,0,0,12" Foreground="{DynamicResource Muted}"
+               Text="Runs the Ookla Speedtest CLI. Takes about 30 seconds."/>
+
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+        <Button x:Name="OpenUrlButton" Content="Open Result" Width="110" Margin="0,0,8,0" IsEnabled="False"/>
+        <Button x:Name="RunButton" Content="Run Test" Width="110" Margin="0,0,8,0" IsDefault="True" Style="{StaticResource AccentButton}"/>
+        <Button x:Name="CloseButton" Content="Close" Width="80" IsCancel="True"/>
+    </StackPanel>
+</StackPanel>
+'@
+        $SpeedWindow = New-OpsHubWindow -Title 'Speed Test' -Badge 'SPEED' -Width 500 -BodyXaml $Body
+        $UI = $SpeedWindow.UI
+        $UI.Window = $SpeedWindow.Window
+
+        $UI.OpenUrlButton.Add_Click({ Start-Process $UI.UrlBox.Text })
+        $UI.CloseButton.Add_Click({ $UI.Window.Close() })
+        $UI.RunButton.Add_Click({
+                $Started = Start-BackgroundTask -Name 'Speed Test' -ScriptBlock { Invoke-SpeedTest } -Context @{ UI = $UI } -OnComplete {
+                    param($Task)
+                    $UI = $Task.Context.UI
+                    $UI.Progress.Visibility = 'Collapsed'
+                    $UI.RunButton.IsEnabled = $true
+                    if ($Task.Error) {
+                        Set-UIStatus $UI "Speed test failed: $($Task.Error)" Red
+                        if (-not $UI.Window.IsVisible) { Show-TrayNotice 'Speed test failed' $Task.Error Error }
+                        return
+                    }
+                    $r = $Task.Result | Select-Object -Last 1
+                    $UI.DownloadValue.Text = "$($r.DownloadSpeed)"
+                    $UI.UploadValue.Text = "$($r.UploadSpeed)"
+                    $UI.LatencyValue.Text = "$($r.Latency) ms"
+                    $UI.JitterValue.Text = "$($r.Jitter) ms"
+                    $UI.PacketLossValue.Text = "$($r.PacketLoss)%"
+                    $UI.ExternalIPValue.Text = "$($r.ExternalIP)"
+                    $UI.InternalIPValue.Text = "$($r.InternalIP)"
+                    $UI.ServerValue.Text = "$($r.UsedServer)"
+                    $UI.ISPValue.Text = "$($r.ISP)"
+                    $UI.UrlBox.Text = "$($r.URL)"
+                    $UI.OpenUrlButton.IsEnabled = "$($r.URL)" -like 'http*'
+                    Set-UIStatus $UI "Completed at $(Get-Date -Format 'h:mm tt')." Green
+                    if (-not $UI.Window.IsVisible) {
+                        Show-TrayNotice 'Speed test complete' ("Download {0} Mbps, upload {1} Mbps" -f $r.DownloadSpeed, $r.UploadSpeed)
+                    }
+                }
+                if (-not $Started) { return }
+                $UI.RunButton.IsEnabled = $false
+                $UI.OpenUrlButton.IsEnabled = $false
+                $UI.Progress.Visibility = 'Visible'
+                Set-UIStatus $UI 'Running speed test (about 30 seconds)...'
+            })
+
+        [void]$SpeedWindow.Window.ShowDialog()
+}
+#endregion Speed Test
+
 function Restart-Explorer {
     Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
 }
@@ -1093,56 +1685,72 @@ $Systray_Tool_Icon.Add_Click({
             #Region Customize Windows
             $CustomizeWindowsMenu = Add-MenuItem -Menu $ContextMenu -Text "Customize Windows" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAAh0lEQVRIS2P84afzn4FIwPj/n05dNjcDIxPDFSK1MDCOWkAoqEaDiFAIjaYigiFEhyD66aulTdgdEBVsf37dyctlYOBiElQhVg8jw4LnRFvAICZx5z+DFwMD0xsSLFj4iujCjuH/X53/En5AxzMSX9gxjFpAILYZR4OIUH4YDSJCIcRA8yACAEAenUVOCa2cAAAAAElFTkSuQmCC'
             
-            $AlloftheBelow = Add-SubMenuItem -ParentMenuItem $CustomizeWindowsMenu -Text "All of the Below" -IconBase64 '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'
-            $AlloftheBelow.add_Click({
-                    Set-ItemProperty -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name 'AppsUseLightTheme' -Value 0 -Type Dword -Force
-                    Set-ItemProperty -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name 'SystemUsesLightTheme' -Value 0 -Type Dword -Force
-                    Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'HideFileExt' -Value 0 -Force
-                    Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'TaskbarMn' -Value 0 -Force
-                    Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search' -Name 'SearchboxTaskbarMode' -Value 0 -Force
-                    New-Item -Path 'HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32' -Value "" -Force
-                    New-Item -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel' -Name '{645FF040-5081-101B-9F08-00AA002F954E}' -Value 1 -Force
-                    Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'Hidden' -Value 1 -Force
-                    Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "ShowTaskViewButton" -Value 0
-                    Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "MMTaskbarMode" -Value 2
-                    $Path = "HKLM:\\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Icons"
-                    If (!(Test-Path($Path))) {
-                        New-Item $Path -Force | New-ItemProperty -Name '29' -Value '%windir%\System32\shell32.dll,-50' -Type String -Force | Out-Null
-                    }
-                    else {
-                        Get-Item $Path | New-ItemProperty -Name '29' -Value '%windir%\System32\shell32.dll,-50' -Type String -Force | Out-Null
-                    }
-                    Restart-Explorer
-                })
-
             $SettingsIcon = "iVBORw0KGgoAAAANSUhEUgAAABQAAAATCAMAAACnUt2HAAABHVBMVEVHcExzfoZve4R7hY1pdX50fod3gYpodH1qdX9pdH6AiZFncnyAiZGBipJ3gYpxfIWAipJteIJteIF3gYp9ho9odH5xfIV4got/iJF9ho9rd4Boc31mcnxwe4Vrd4B+h4+BipJpdH5/iJCAiZFpdX5/iJGBipJ/iJFueYJ8hY5weoRueYN6hIxmcnyBipJ9ho5/iJByfYZ2gIl0f4dpdX55g4xsd4Boc30LW6UMV5/J0NMMUpeBipIKYa1veYOjq7DEy8/w8/W6wcW6ydWJk5qDjZWQmaBglMCtvMgxd7VyoMbS2NsdbLHG093f5uyxuL3Z3d+Wn6bn7PBIfrKBi5O/xMinwtjU2duas8uGpcNGea1/ocNZhLGrsreRstAKJ6PYAAAAL3RSTlMACvHbNAPtaPjdL+1465GiylEPxDlI1UMd8ibNorTEW48a7kyJiSJVdBrmP3p94RYJLGEAAAEcSURBVBjTTdB3U8IwAAXwtKXQQsuUIYIM94SOpJO2Uobs5Vb8/h/DpBc93z/v3u8uuVwAwKk0ZYl0Q26eA5pk1nVlKZmU7l03e0LxokvSbkd1RrHCdf5yeEDxCqM78v3N8B82IBys7CC0+yMIb4nwTJmDT317OpmMw2AAuTIDQLoQV1V/Nu71TGu3WEE1XkgDTCp8Duc907SsN7ur4Q00HGi/ROa8r4dkAwVHCxZzYs7jawdPFmTqJcXzt1PTcZyvZR9TKQN4vlr3oL393n18LtdD7zqXZ8irbljUDR5wZgPkXdLHM8cIKaP9fqMixMYo5jHquqHrOkJCjmICT10QRYH0KcXYkWGkEq1WEbdY/P3lai11Fx1J1aIrfwDaazWE1OQ3kQAAAABJRU5ErkJggg=="
-            $DarkMode = Add-SubMenuItem -ParentMenuItem $CustomizeWindowsMenu -Text "Dark Mode" -IconBase64 $SettingsIcon -AddSeparator
-            $DarkMode.add_Click({
-                    Set-ItemProperty -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name 'AppsUseLightTheme' -Value 0 -Type Dword -Force
-                    Set-ItemProperty -Path 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name 'SystemUsesLightTheme' -Value 0 -Type Dword -Force
-                    Restart-Explorer
-                })
-
-            $OldContextMenu = Add-SubMenuItem -ParentMenuItem $CustomizeWindowsMenu -Text "Old Context Menu" -IconBase64 $SettingsIcon
-            $OldContextMenu.add_Click({
-                    New-Item -Path 'HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32' -Value "" -Force
-                    Restart-Explorer
-                })
-
-            @(
-                @{ Text = 'Remove Search Bar';           Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search';            Name = 'SearchboxTaskbarMode'; Value = 0 }
-                @{ Text = 'Remove Teams Icon';           Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Name = 'TaskbarMn';            Value = 0 }
-                @{ Text = 'Show Hidden Extensions';      Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Name = 'Hidden';               Value = 1 }
-                @{ Text = 'Remove Task View Button';     Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Name = 'ShowTaskViewButton';   Value = 0 }
-                @{ Text = 'Per-display Taskbar Buttons'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'; Name = 'MMTaskbarMode';        Value = 2 }
-            ) | ForEach-Object {
-                $cfg = $_
-                $item = Add-SubMenuItem -ParentMenuItem $CustomizeWindowsMenu -Text $cfg.Text -IconBase64 $SettingsIcon
-                $item.add_Click({
-                    Set-ItemProperty -Path $cfg.Path -Name $cfg.Name -Value $cfg.Value -Force
-                    Restart-Explorer
-                }.GetNewClosure())
-            }
+            # Each tweak row uses the cog icon ($SettingsIcon). Undo puts values back to the Windows
+            # default: Default when given, otherwise the value is deleted (UndoPath = key to delete
+            # for key-default settings). "All of the Below" covers every row except ExcludeFromAll.
+            $RegAdvanced    = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+            $RegPersonalize = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize'
+            $CustomizeRows = @(
+                @{ Text = 'Dark Mode'; Separator = $true; Registry = @(
+                        @{ Path = $RegPersonalize; Name = 'AppsUseLightTheme'; Value = 0; Default = 1; Type = 'Dword' }
+                        @{ Path = $RegPersonalize; Name = 'SystemUsesLightTheme'; Value = 0; Default = 1; Type = 'Dword' }
+                    ) }
+                @{ Text = 'End Task in Taskbar Menu'; Registry = @(
+                        @{ Path = "$RegAdvanced\TaskbarDeveloperSettings"; Name = 'TaskbarEndTask'; Value = 1; Type = 'Dword' }
+                    ) }
+                @{ Text = 'Explorer Opens to This PC'; Registry = @(
+                        @{ Path = $RegAdvanced; Name = 'LaunchTo'; Value = 1; Type = 'Dword' }
+                    ) }
+                @{ Text = 'Hide Recycle Bin Desktop Icon'; Registry = @(
+                        @{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel'; Name = '{645FF040-5081-101B-9F08-00AA002F954E}'; Value = 1; Type = 'Dword' }
+                    ) }
+                @{ Text = 'Hide Task View Button'; Registry = @(
+                        @{ Path = $RegAdvanced; Name = 'ShowTaskViewButton'; Value = 0; Type = 'Dword' }
+                    ) }
+                # Windows 11 protects this value on newer builds (UCPD); the write may be refused, which is reported.
+                @{ Text = 'Hide Widgets'; ExcludeFromAll = $true; Registry = @(
+                        @{ Path = $RegAdvanced; Name = 'TaskbarDa'; Value = 0; Type = 'Dword' }
+                    ) }
+                # Policy key: standard users may not be able to write it (reported if so).
+                @{ Text = 'No Bing in Start Search'; Registry = @(
+                        @{ Path = 'HKCU:\Software\Policies\Microsoft\Windows\Explorer'; Name = 'DisableSearchBoxSuggestions'; Value = 1; Type = 'Dword' }
+                    ) }
+                @{ Text = 'No Start Recommendations'; Registry = @(
+                        @{ Path = $RegAdvanced; Name = 'Start_IrisRecommendations'; Value = 0; Type = 'Dword' }
+                    ) }
+                @{ Text = 'Old Context Menu'; Registry = @(
+                        @{ Path = 'HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32'; Value = ''; Type = 'String'
+                            UndoPath = 'HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}' }
+                    ) }
+                @{ Text = 'Per-display Taskbar Buttons'; Registry = @(
+                        @{ Path = $RegAdvanced; Name = 'MMTaskbarMode'; Value = 2; Type = 'Dword' }
+                    ) }
+                @{ Text = 'Remove Search Bar'; Registry = @(
+                        @{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search'; Name = 'SearchboxTaskbarMode'; Value = 0; Type = 'Dword' }
+                    ) }
+                # Needs admin (HKLM). Without it, the other settings still apply and this one is reported.
+                @{ Text = 'Remove Shortcut Arrows'; Registry = @(
+                        @{ Path = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Icons'; Name = '29'; Value = '%windir%\System32\shell32.dll,-50'; Type = 'String' }
+                    ) }
+                @{ Text = 'Remove Teams Icon'; Registry = @(
+                        @{ Path = $RegAdvanced; Name = 'TaskbarMn'; Value = 0; Type = 'Dword' }
+                    ) }
+                @{ Text = 'Show Clock Seconds'; Registry = @(
+                        @{ Path = $RegAdvanced; Name = 'ShowSecondsInSystemClock'; Value = 1; Type = 'Dword' }
+                    ) }
+                # Shows hidden files AND file extensions.
+                @{ Text = 'Show Hidden Extensions'; Registry = @(
+                        @{ Path = $RegAdvanced; Name = 'Hidden'; Value = 1; Default = 2; Type = 'Dword' }
+                        @{ Path = $RegAdvanced; Name = 'HideFileExt'; Value = 0; Default = 1; Type = 'Dword' }
+                    ) }
+                @{ Text = 'Taskbar Aligned Left'; Registry = @(
+                        @{ Path = $RegAdvanced; Name = 'TaskbarAl'; Value = 0; Type = 'Dword' }
+                    ) }
+            )
+            $AllOfTheBelow = @{ Text = 'All of the Below'; ConfirmUndo = $true; Icon = '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'
+                Registry = @($CustomizeRows | Where-Object { -not $_.ExcludeFromAll } | ForEach-Object { $_.Registry }) }
+            Add-TweakMenuItems -ParentMenuItem $CustomizeWindowsMenu -Rows (@($AllOfTheBelow) + $CustomizeRows) -DefaultIcon $SettingsIcon
             #endregion
 
             #region Installs
@@ -1334,317 +1942,7 @@ $Systray_Tool_Icon.Add_Click({
                 })
 
             $SpeedTest = Add-SubMenuItem -ParentMenuItem $ScriptsMenu -Text "Speed Test" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAYAAADE6YVjAAABC0lEQVRIS92UOw7CMAyGW0CCCYkNcQUGxBk4TW/EhdjZmZhYYQOJ129UV47rBCWBCoFk0aTx//mVlkUHv7IDRvEzkDGyPYmMKbCHWE/wfAxVJJTJDY49w1lD+MgdD30L5oNQpFfYIALC51uaFoRLISO+ADYygGfsDet9ed7R1RBZa/KNGQyvrxTJAXCSpgZDtji1UBOUeoUkiHSXDFlhsYftYAfYLJVQ+0/xP4fReG8YIpudoe+4NprWzMc0WwdEwi1NvZECkD0wBykH8m4am/exEB01rSvY2mikA4lptK80QY3cTELi3nLFfkp8EKdf+p58A1JakFxQa+r0XKfck1DJXnqfFPUOwf9Anm20NxRL3bTtAAAAAElFTkSuQmCC'
-            $SpeedTest.add_Click({
-                    $ProgressPreference = 'SilentlyContinue'
-
-                    #Custom Icon
-                    $IconBase64 = "iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAYAAADE6YVjAAABC0lEQVRIS92UOw7CMAyGW0CCCYkNcQUGxBk4TW/EhdjZmZhYYQOJ129UV47rBCWBCoFk0aTx//mVlkUHv7IDRvEzkDGyPYmMKbCHWE/wfAxVJJTJDY49w1lD+MgdD30L5oNQpFfYIALC51uaFoRLISO+ADYygGfsDet9ed7R1RBZa/KNGQyvrxTJAXCSpgZDtji1UBOUeoUkiHSXDFlhsYftYAfYLJVQ+0/xP4fReG8YIpudoe+4NprWzMc0WwdEwi1NvZECkD0wBykH8m4am/exEB01rSvY2mikA4lptK80QY3cTELi3nLFfkp8EKdf+p58A1JakFxQa+r0XKfck1DJXnqfFPUOwf9Anm20NxRL3bTtAAAAAElFTkSuQmCC"
-                    $IconBytes = [Convert]::FromBase64String($IconBase64)
-                    $ims = New-Object IO.MemoryStream($IconBytes, 0, $IconBytes.Length)
-
-                    # Create form
-                    $form = New-Object System.Windows.Forms.Form
-                    $form.Text = "Speed Test"
-                    $form.Width = 407
-                    $form.Height = 333
-                    $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedSingle
-                    $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
-                    $form.MaximizeBox = $false  # Disable maximize button
-                    $Form.Icon = [System.Drawing.Icon]::FromHandle((New-Object System.Drawing.Bitmap -Argument $ims).GetHIcon())
-                    $form.TopMost = $true
-
-                    # Create second container
-                    $container2 = New-Object System.Windows.Forms.GroupBox
-                    $container2.Text = "Speed Test:"
-                    $container2.Width = 380
-                    $container2.Height = 125
-                    $container2.Location = New-Object System.Drawing.Point(10, 10)
-
-                    # Controls inside container 1
-                    $label23 = New-Object System.Windows.Forms.Label
-                    $label23.Text = "Download:"
-                    $label23.Location = New-Object System.Drawing.Point(10, 20)
-                    $label23.Height = 15
-                    $label23.Width = 70
-
-                    # Add second label to container 1
-                    $label24 = New-Object System.Windows.Forms.Label
-                    $label24.Text = "Upload:"
-                    $label24.Location = New-Object System.Drawing.Point(10, 39)
-                    $label24.Height = 15
-                    $label24.Width = 70
-
-                    # Add second label to container 1
-                    $label25 = New-Object System.Windows.Forms.Label
-                    $label25.Text = "Packet Loss:"
-                    $label25.Location = New-Object System.Drawing.Point(10, 58)
-                    $label25.Height = 15
-                    $label25.Width = 70
-
-                    # Add second label to container 1
-                    $label26 = New-Object System.Windows.Forms.Label
-                    $label26.Text = "Jitter:"
-                    $label26.Location = New-Object System.Drawing.Point(10, 77)
-                    $label26.Height = 15
-                    $label26.Width = 70
-
-                    # Add second label to container 1
-                    $label27 = New-Object System.Windows.Forms.Label
-                    $label27.Text = ""
-                    $label27.Location = New-Object System.Drawing.Point(80, 20)
-                    $label27.Height = 15
-                    $label27.Width = 50
-
-                    # Add second label to container 1
-                    $label28 = New-Object System.Windows.Forms.Label
-                    $label28.Text = ""
-                    $label28.Location = New-Object System.Drawing.Point(80, 39)
-                    $label28.Height = 15
-                    $label28.Width = 50
-
-                    # Add second label to container 1
-                    $label29 = New-Object System.Windows.Forms.Label
-                    $label29.Text = ""
-                    $label29.Location = New-Object System.Drawing.Point(80, 58)
-                    $label29.Height = 15
-                    $label29.Width = 30
-
-                    # Add second label to container 1
-                    $label30 = New-Object System.Windows.Forms.Label
-                    $label30.Text = ""
-                    $label30.Location = New-Object System.Drawing.Point(80, 77)
-                    $label30.Height = 15
-                    $label30.Width = 50
-
-                    # Controls inside container 1
-                    $label31 = New-Object System.Windows.Forms.Label
-                    $label31.Text = "External IP:"
-                    $label31.Location = New-Object System.Drawing.Point(130, 20)
-                    $label31.Height = 15
-                    $label31.Width = 70
-
-                    # Add second label to container 1
-                    $label32 = New-Object System.Windows.Forms.Label
-                    $label32.Text = "Internal IP:"
-                    $label32.Location = New-Object System.Drawing.Point(130, 39)
-                    $label32.Height = 15
-                    $label32.Width = 70
-
-                    # Add second label to container 1
-                    $label33 = New-Object System.Windows.Forms.Label
-                    $label33.Text = "Server Used:"
-                    $label33.Location = New-Object System.Drawing.Point(130, 58)
-                    $label33.Height = 15
-                    $label33.Width = 80
-
-                    # Add second label to container 1
-                    $label34 = New-Object System.Windows.Forms.Label
-                    $label34.Text = "ISP:"
-                    $label34.Location = New-Object System.Drawing.Point(130, 77)
-                    $label34.Height = 15
-                    $label34.Width = 80
-
-                    # Add second label to container 1
-                    $label35 = New-Object System.Windows.Forms.Label
-                    $label35.Text = ""
-                    $label35.Location = New-Object System.Drawing.Point(210, 20)
-                    $label35.Height = 15
-
-                    # Add second label to container 1
-                    $label36 = New-Object System.Windows.Forms.Label
-                    $label36.Text = ""
-                    $label36.Location = New-Object System.Drawing.Point(210, 39)
-                    $label36.Height = 15
-
-                    # Add second label to container 1
-                    $label37 = New-Object System.Windows.Forms.Label
-                    $label37.Text = ""
-                    $label37.Location = New-Object System.Drawing.Point(210, 58)
-                    $label37.Height = 15
-                    $label37.Width = 150
-
-                    # Add second label to container 1
-                    $label38 = New-Object System.Windows.Forms.Label
-                    $label38.Text = ""
-                    $label38.Location = New-Object System.Drawing.Point(210, 77)
-                    $label38.Height = 15
-                    $label38.Width = 80
-
-                    # Controls inside container 1
-                    $label39 = New-Object System.Windows.Forms.Label
-                    $label39.Text = "Latency:"
-                    $label39.Location = New-Object System.Drawing.Point(10, 96)
-                    $label39.Height = 15
-                    $label39.Width = 70
-
-                    # Add second label to container 1
-                    $label40 = New-Object System.Windows.Forms.Label
-                    $label40.Text = ""
-                    $label40.Location = New-Object System.Drawing.Point(80, 96)
-                    $label40.Height = 15
-                    $label40.Width = 30
-
-                    # Add controls to container 2
-                    $container2.Controls.Add($label23)
-                    $container2.Controls.Add($label24)
-                    $container2.Controls.Add($label25)
-                    $container2.Controls.Add($label26)
-                    $container2.Controls.Add($label27)
-                    $container2.Controls.Add($label28)
-                    $container2.Controls.Add($label29)
-                    $container2.Controls.Add($label30)
-                    $container2.Controls.Add($label31)
-                    $container2.Controls.Add($label32)
-                    $container2.Controls.Add($label33)
-                    $container2.Controls.Add($label34)
-                    $container2.Controls.Add($label35)
-                    $container2.Controls.Add($label36)
-                    $container2.Controls.Add($label37)
-                    $container2.Controls.Add($label38)
-                    $container2.Controls.Add($label39)
-                    $container2.Controls.Add($label40)
-
-                    # Create third container
-                    $container3 = New-Object System.Windows.Forms.GroupBox
-                    $container3.Text = "Speed Test URL:"
-                    $container3.Width = 380
-                    $container3.Height = 55
-                    $container3.Location = New-Object System.Drawing.Point(10, 145)
-
-                    # Controls inside container 3
-                    $textbox3 = New-Object System.Windows.Forms.TextBox
-                    $textbox3.Location = New-Object System.Drawing.Point(10, 45)
-                    $textbox3.Multiline = $true
-                    $textbox3.Anchor = 'Top, Left, Right, Bottom'
-                    $textbox3.Dock = 'Fill'
-                    $textbox3.Enabled = $false
-                    $textbox3.Add_TextChanged({ validateBoxes })
-                    $textbox3.Text = ""
-
-                    function validateboxes() {
-                        if ($textbox3.Text) {
-                            $URLClip.Enabled = $true
-                        }
-                        else {
-                            $URLClip.Enabled = $false
-                        }
-                    }
-
-                    #Add controls to container 3
-                    $container3.Controls.Add($textbox3)
-
-                    # Create fourth container
-                    $container4 = New-Object System.Windows.Forms.GroupBox
-                    $container4.Text = "Progress:"
-                    $container4.Width = 380
-                    $container4.Height = 38
-                    $container4.Location = New-Object System.Drawing.Point(10, 207)
-
-                    $progressBar = New-Object Windows.Forms.ProgressBar
-                    $progressBar.Name = "ProgressBar"
-                    $progressBar.Style = [Windows.Forms.ProgressBarStyle]::Blocks
-                    $progressBar.Width = 250
-                    $progressBar.Location = New-Object Drawing.Point(10, 45)
-                    $progressBar.Anchor = 'Top, Left, Right, Bottom'
-                    $progressBar.Dock = 'Fill'
-
-                    # Add controls to container 4
-                    $container4.Controls.Add($progressBar)
-
-                    # Create OK button
-                    $buttonOK = New-Object System.Windows.Forms.Button
-                    $buttonOK.Text = "Run Test"
-                    $buttonOK.Width = 150
-                    $buttonOK.Height = 36
-                    $buttonOK.Location = New-Object System.Drawing.Point(32, 258)
-                    $buttonOK.Add_Click({
-                            $buttonOK.Enabled = $false
-                            $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-                            $progressBar.Value = 5
-                            runthingy
-                        })
-
-                    # Create button for open URL in browser
-                    $URLClip = New-Object System.Windows.Forms.Button
-                    $URLClip.Text = "Open URL in Browser"
-                    $URLClip.Location = New-Object System.Drawing.Point(217, 258)
-                    $URLClip.Width = 150
-                    $URLClip.Height = 36
-                    $URLClip.Enabled = $false
-                    $URLClip.Add_Click({
-                            $ResultURL = $textbox3.Text
-                            Start-Process $ResultURL        
-                        })
-
-                    # Add OK button to the form
-                    $form.Controls.Add($buttonOK)
-                    $form.Controls.Add($URLClip)
-
-                    # Add containers to the form
-                    $form.Controls.Add($container2)
-                    $form.Controls.Add($container3)
-                    $form.Controls.Add($container4)
-
-                    function runthingy {
-                        #Internet Speed Test
-                        #Download speedtest CLI if not present
-                        $progressBar.Value = 20
-                        $textbox3.Text = "Checking file exists..."
-                        if (-not (Test-Path "$env:TEMP\speedtest.exe")) {
-                            $ProgressPreference = 'SilentlyContinue'
-                            $SpeedTestInstaller = "SpeedTest.zip"
-                            $WebClient = New-Object System.Net.WebClient
-                            $URL = 'https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-win64.zip'
-                            $File = "$env:TEMP\$SpeedTestInstaller"
-
-                            $progressBar.Value = 40
-                            $textbox3.Text = "Downloading file..."
-                            $WebClient.DownloadFile($URL, $File)
-
-                            $progressBar.Value = 60
-                            $textbox3.Text = "Unzipping file..."
-                            Expand-Archive -Path $File -DestinationPath $env:TEMP -ErrorAction SilentlyContinue
-                        }
-
-                        #Run speed test and parse results
-                        $progressBar.Value = 80
-                        $textbox3.Text = "Speed Test Running..."
-                        $Speedtest = & "$env:TEMP\speedtest.exe" --format=json --accept-license --accept-gdpr
-                        $Speedtest | Out-File "$env:TEMP\Last.txt" -Force
-                        $Speedtest = $Speedtest | ConvertFrom-Json
-
-                        $SpeedObject = [PSCustomObject]@{
-                            DownloadSpeed = [math]::Round($Speedtest.download.bandwidth / 1000000 * 8, 2)
-                            UploadSpeed   = [math]::Round($Speedtest.upload.bandwidth / 1000000 * 8, 2)
-                            PacketLoss    = [math]::Round($Speedtest.packetLoss)
-                            ISP           = $Speedtest.isp
-                            ExternalIP    = $Speedtest.interface.externalIp
-                            InternalIP    = $Speedtest.interface.internalIp
-                            UsedServer    = $Speedtest.server.host
-                            URL           = $Speedtest.result.url
-                            Jitter        = [math]::Round($Speedtest.ping.jitter)
-                            Latency       = [math]::Round($Speedtest.ping.latency)
-                        }
-
-                        #Write to labels
-                        $label27.Text = $SpeedObject.DownloadSpeed
-                        $label28.Text = $SpeedObject.UploadSpeed
-                        $label29.Text = $SpeedObject.PacketLoss
-                        $label38.Text = $SpeedObject.ISP
-                        $label35.Text = $SpeedObject.ExternalIP
-                        $label36.Text = $SpeedObject.InternalIP
-                        $label37.Text = $SpeedObject.UsedServer
-                        $textbox3.Text = $SpeedObject.URL
-                        $label30.Text = $SpeedObject.Jitter
-                        $label40.Text = "$($SpeedObject.Latency)ms"
-                        $progressBar.Value = 100
-                        $form.Cursor = [System.Windows.Forms.Cursors]::Default
-                    }
-
-                    # Show the form
-                    $form.Add_Shown({ $form.Activate() })
-                    $form.ShowDialog()
-                })
+            $SpeedTest.add_Click({ Show-SpeedTest })
 
             $PingGoogle = Add-SubMenuItem -ParentMenuItem $ScriptsMenu -Text "Ping Google" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAEF0lEQVRIS4VWWUhVQRieOV7TIsuMFsESt9IumhvVQ7iVRGa0QMvNniKMnnoKohXb6K2I0oQCMTOLCIwie4gCF9KWq6Kp5bVegrKyRU2re2f6/3/OnHtuV2sunjPnzJzv/75/Gzn7z/hYkO2SnNdKiRslM+CCU/jjkjPX/IfP6v4FwSdbHCzIFoDE4QdIUgq46b34DEucgy39Pvrxiwmxgl6+ycsLn8qHxwiMWMOAXQippgBrLmhV2vDotOHwpPv9P+2kAwy8z8vYDsyuExCxBpIARjKItU0FsVcqyF/wDaoJYdw1v9Ftuc0ygMzDxLcxgoKN+o5fc7jYwS1hfxnVoscjRi0lloF3OenSACBkYfMMOcNQQMQQPyBZ8EYrtFyiYwMbFjR3EjZdsuo2i/qLA1wDYQBJt6klNC6Rzau+FZAPsnubFKMeM9KSGwaQA4u4yTCBQpa7DXqReX2T2N/wga/sH1GxNSWgf2NMJsvLvlm+wz2tx2bSXtGWQSlFUjHjzODh3LGig/PMuk0l0itrIMFl/QUPLPuJLmzpZCPjkuWf+R7AXj88OjCDTQ/nzPdkKWWWP2MUiDDEXp5+dYMqIYQGiXcqBojplPgkFn3tNss69tUCt6eonj8vi2Syc6MUP/p1QpEhZRB+adXrBaBbxuvLPZSisa3dPOOoAlcfqKHn+gN87z4eybwtySoDbCmGuDy1qpgyUOUlTclVcW0vWfqRL37X2BHJkpnIMG0/MYv5WhYT6xAr2GZhOqvWCW5GX1OsLx9g8WAgzW5gwiiol51gwNucYHOlnoKbnFeKzBhgGFQNINmuXfdY6uGhINf87TJ87joZxbxNcSY/VZJm7XOecnmtP28w2VANyNwyPJeX7atizkND/+DOWPepKCbdhdI30kcdxaBOCL6HO9YFd14qcvkMURuEAht6djfwYUjTZccnNtJ2NIpFQJp6G2MoulBVUlBNwBxIgp2dFLrFlWvQORAj1buUVhXE3j0P6DH54Ge6a7l9p2fTs2iKpgaBaHoVDWHAHTmDqpIXVRSq9NHFgtZVoyHARVFx7O7WygCRxTdL2euht6w7pZ3YInNSQC1WsXTkflIGcCSWr4YDyj9U5NUzdEHJhb9WNJcepxtZkNP1l+QaMOLIG/I3O1zMqiwN/frb80tvtNcM1SUAwRlpAUUYXvY0pSNAFfUhUOIYmxPOi9TBYyfN4s8Xuhj3+QOODRXdpmhad8yyV0ueU9bYOqM6qLl0OfJHgg8cy1Xn14b55Ng4xQR9qXIaDwowo+J0I6GXZU7DzqsaHPZ5AS50zBidwrPZb7usAAX2hdhzuRiBwCZpbuhPa1MzrEzsk3AJyR+HfziCx6QG9NbYszkloKPG7PjMk9ZqpTIA73Cs+kVn+GTjD1HmBQro0ZHdAAAAAElFTkSuQmCC'
             $PingGoogle.add_Click({
@@ -1670,16 +1968,21 @@ $Systray_Tool_Icon.Add_Click({
                     $SHSDForm.StartPosition = "CenterScreen"  # Center the form on the screen
                     $SHSDForm.FormBorderStyle = "FixedDialog"  # Prevent resizing
                     $SHSDForm.MaximizeBox = $false  # Disable maximize button
+                    $SHSDForm.ShowinTaskbar = $false
                     $SHSDForm.TopMost = $true
+                    $SHSDForm.ForeColor = [System.Drawing.Color]::White
+                    $IconBytes = [Convert]::FromBase64String($DogIcon)
+                    $ims = New-Object IO.MemoryStream($IconBytes, 0, $IconBytes.Length)
+                    $SHSDForm.Icon = [System.Drawing.Icon]::FromHandle((New-Object System.Drawing.Bitmap -Argument $ims).GetHIcon())
 
                     # Set a background color for the form
                     $Sneaky = "$env:TEMP\Logix.txt"
                     $SneakyTest = Test-Path $Sneaky -PathType Leaf
                     if ($SneakyTest -eq "True") {
-                        $SHSDForm.BackColor = [System.Drawing.Color]::PeachPuff
+                        $SHSDForm.BackColor = [System.Drawing.Color]::Firebrick
                     }
                     else {
-                        $SHSDForm.BackColor = [System.Drawing.Color]::Black
+                        $SHSDForm.BackColor = [System.Drawing.Color]::FromArgb(0, 48, 73)
                     }
 
                     # Create a Start button
@@ -1699,6 +2002,7 @@ $Systray_Tool_Icon.Add_Click({
                             if ($SneakyTest -eq "True") {
                                 Notepad $Sneaky
                             }
+                            Remove-Job -Name SimpHelp -Force -ErrorAction SilentlyContinue
                             Start-Job -Name SimpHelp -ScriptBlock {
                                 $Script:Running = $true
                                 while ($Script:Running) {
@@ -1708,8 +2012,8 @@ $Systray_Tool_Icon.Add_Click({
                                         (New-Object System.Media.SoundPlayer $(Get-ChildItem -Path "$env:windir\Media\Ring05.wav").FullName).Play()
                                         $Sneaky = "$env:TEMP\Logix.txt"
                                         Get-Date | Out-File $Sneaky -Append
-                                        Start-Sleep 12
                                     }
+                                    Start-Sleep 12
                                 }
                             }
                         })
@@ -1727,7 +2031,8 @@ $Systray_Tool_Icon.Add_Click({
                             $SHSDIndicator.BackColor = [System.Drawing.Color]::Red  # Set indicator color to red
                             $SHSDIndicator.Text = "Stopped"  # Set text to "Off"
                             $SHSDIndicator.ForeColor = [System.Drawing.Color]::White
-                            Stop-Job -Name SimpHelp
+                            Stop-Job -Name SimpHelp -ErrorAction SilentlyContinue
+                            Remove-Job -Name SimpHelp -Force -ErrorAction SilentlyContinue
                             $Sneaky = "$env:TEMP\Logix.txt"
                             $SneakyTest = Test-Path $Sneaky -PathType Leaf
                             if ($SneakyTest -eq "True") {
@@ -1751,7 +2056,7 @@ $Systray_Tool_Icon.Add_Click({
                                 $SneakyTest = Test-Path $Sneaky -PathType Leaf
                                 if ($SneakyTest -eq "True") {
                                     Remove-Item -Path $Sneaky -Force
-                                    $SHSDForm.BackColor = [System.Drawing.Color]::Black
+                                    $SHSDForm.BackColor = [System.Drawing.Color]::FromArgb(0, 48, 73)
                                 }
                             }
                         })
@@ -1773,7 +2078,7 @@ $Systray_Tool_Icon.Add_Click({
                     $SHSDForm.Add_FormClosed({
                             $SHSDForm.Dispose()
                         })
-                    [void]($SHSDForm.ShowDialog())
+                    $SHSDForm.Show()
                 })
             #endregion
 
