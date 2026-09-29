@@ -26,7 +26,7 @@
 - Command Prompt, PowerShell, PowerShell 7, PowerShell ISE
 - Computer Management, Group Policy Update, Hyper-V Manager, MMC, Network Connections
 - Password Generator, Base64 Wizard, Click Paste, Scroll Jiggler
-- Registry, System Properties, Task Manager, Task Scheduler, Windows Sandbox
+- Registry, System Properties, Task Manager, Task Scheduler
 
 ### 3. Customize Windows
 ![Customize Windows Menu](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardRightClickContextMenuCustWin.png)
@@ -54,10 +54,16 @@
 - Ping Google
 - (Extensible: more PowerShell or batch scripts can be added)
 
-### 6. Hide
+### 6. Windows Sandbox
+- Windows Sandbox — launch Windows Sandbox (offers to install the feature if missing)
+- Windows Sandbox Proxy — CC Proxy running inside a sandbox; the proxy IP is copied to your clipboard
+
+### 7. Hide
 - Hides Wizard-Buddy from the desktop while keeping tray controls available.
 
 ## Other Features
+- **Double-click Wizard-Buddy** → opens PowerShell 7 (falls back to Windows PowerShell if 7 isn't installed). Hold **Shift** while double-clicking to run it as Administrator.
+- **Middle-click Wizard-Buddy** → opens whatever web address is on your clipboard in your default browser. A bare host like `google.com` is treated as `https://google.com`; anything that isn't an http/https address is ignored with a tray notice.
 - Click and drag any .gif onto Wizard-Buddy to change it to that .gif! Even works from web browsers. (File has to be .gif)
 - Shift + Left Click on most Applications to run them in Administrator context.
 - Hover your mouse over Wizard-Buddy, then mousewheel up and down to increase and decrease its size.

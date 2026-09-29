@@ -76,3 +76,9 @@ The helpers are copied from `C:\Projects\Combat-Hounds\Combat-Hounds.ps1`, so a 
 - **Speed Test** (still under Scripts) is `Show-SpeedTest`, built with `New-OpsHubWindow` (Tokyo Night, OpsHub title bar). The test runs in the background via `Start-BackgroundTask` / `Invoke-SpeedTest` (`$BackgroundFunctions` lists only `Invoke-SpeedTest`). `Show-TrayNotice` reports the result if the window was closed first.
 - The menu is built inside the tray left-click handler and the buddy is shown with `ShowDialog()`, so menu handlers can see that handler's local variables through PowerShell's dynamic scoping. Don't wrap them in `.GetNewClosure()`.
 - Known pre-existing bug: the buddy's keep-on-top `$timer` is never stopped when the buddy closes, so after Hide it throws on `$form.TopMost` every second (invisible, because the console is hidden).
+
+### v3.2 additions (2026-09-29)
+- The buddy's `PictureBox.MouseDown` handler now multiplexes three gestures: middle-click → `Open-BuddyClipboardUrl`, left double-click (`$e.Clicks -ge 2`) → `Start-BuddyShell`, plain left → the existing `WM_NCLBUTTONDOWN` drag. Double-click is read from the `Clicks` count instead of `Add_DoubleClick` because the drag enters a modal move loop that would otherwise swallow it.
+- `Start-BuddyShell` prefers `$env:ProgramFiles\PowerShell\7\pwsh.exe` and falls back to Windows PowerShell; Shift elevates, and a dismissed UAC prompt (`NativeErrorCode 1223`) is swallowed silently.
+- `Open-BuddyClipboardUrl` reads `Get-Clipboard -Raw`, takes the first non-empty line, prefixes a bare host with `https://`, and only launches `http`/`https` after `[uri]::TryCreate` — so a file path or command on the clipboard is never executed. Failures report through `Show-TrayNotice`.
+- Known pre-existing bug: the buddy's keep-on-top `$timer` is never stopped when the buddy closes, so after Hide it throws on `$form.TopMost` every second (invisible, because the console is hidden).
