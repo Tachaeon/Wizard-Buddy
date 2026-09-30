@@ -52,16 +52,22 @@
 - Networking and utility scripts:
 - Speed Test
 - Ping Google
+- SimpleHelp Spy Detection — watches for extra Remote Access processes, chimes and logs the time
 - (Extensible: more PowerShell or batch scripts can be added)
 
 ### 6. Windows Sandbox
 - Windows Sandbox — launch Windows Sandbox (offers to install the feature if missing)
 - Windows Sandbox Proxy — CC Proxy running inside a sandbox; the proxy IP is copied to your clipboard
+- **PowerShell in Sandbox** — a throwaway sandbox that logs on with a PowerShell window already open
+- **Clipboard Website in Sandbox** — a throwaway sandbox that browses to whatever web address is on your clipboard, so an untrusted link never touches your own browser. A bare host like `google.com` becomes `https://google.com`; anything that isn't an http/https address is refused with a tray notice.
 
 ### 7. Hide
 - Hides Wizard-Buddy from the desktop while keeping tray controls available.
 
 ## Other Features
+- **Base64 Wizard** is built in (no extra script): drop a file on it, or choose one, to copy its Base64 to the clipboard; or copy Base64 text and click **Decode Clipboard** to save the file to Downloads with the right extension.
+- Speed Test, Password Generator, Scroll Jiggler, SimpleHelp Spy Detection and Base64 Wizard all share the same dark, rounded OpsHub-style window. They open alongside the buddy instead of blocking it, so you can keep using the menu while one is open; picking one that is already open brings it to the front.
+- Installs, Group Policy Update, Ping Google and the Sandbox Proxy no longer freeze the menu while they run.
 - **Double-click Wizard-Buddy** → opens PowerShell 7 (falls back to Windows PowerShell if 7 isn't installed). Hold **Shift** while double-clicking to run it as Administrator.
 - **Middle-click Wizard-Buddy** → opens whatever web address is on your clipboard in your default browser. A bare host like `google.com` is treated as `https://google.com`; anything that isn't an http/https address is ignored with a tray notice.
 - Click and drag any .gif onto Wizard-Buddy to change it to that .gif! Even works from web browsers. (File has to be .gif)

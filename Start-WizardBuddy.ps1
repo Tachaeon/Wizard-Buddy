@@ -1,8 +1,8 @@
-<# Create .VBS
+﻿<# Create .VBS
 CreateObject("Wscript.Shell").Run "powershell -NoProfile -ExecutionPolicy Bypass -Command ""irm https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/main/Start-WizardBuddy-v3.ps1 | iex""", 0, False
 #>
 
-#Version = "3.2"
+#Version = "3.3.0"
 
 <#
 === Wizard Buddy v2 - Features ===
@@ -45,6 +45,9 @@ SCRIPTS (Utility Scripts)
 WINDOWS SANDBOX
   - Windows Sandbox         - Sandbox launcher with feature install option
   - Windows Sandbox Proxy   - CC Proxy inside Windows Sandbox
+  - PowerShell in Sandbox   - Throwaway sandbox that logs on with PowerShell open
+  - Clipboard Website in Sandbox - Throwaway sandbox that browses to the web address
+                              on your clipboard (http/https only)
 
 CUSTOMIZE WINDOWS (Registry-Based Tweaks - toggles: a check marks applied tweaks, click again to undo)
   - All of the Below             - Apply every tweak below at once (except Hide Widgets); asks before undoing
@@ -76,6 +79,8 @@ BUDDY INTERACTION (on the desktop companion itself)
   - Drag a .gif onto it     - Change buddy
 
 TECHNICAL
+  - OpsHub-style dialogs (Tokyo Night) for Speed Test, Password Generator,
+    Scroll Jiggler and SimpleHelp Spy Detection
   - System tray integration
   - Drag-and-drop support for files and URLs
   - Shell context menu integration
@@ -372,17 +377,18 @@ function Install-Application {
     )
     WingetCheck  # Ensure Winget is available before proceeding
 
-    $startParams = @{
-        FilePath     = 'powershell.exe'
-        ArgumentList = '-Command', "winget install --id=$AppID -h -e --accept-package-agreements --accept-source-agreements"
-        PassThru     = $true
-    }
-        
-    Start-Process -Wait @startParams  # Ensures the installation completes before proceeding
-        
-    if ($PostInstallPath) {
-        Start-Process $PostInstallPath
-    }
+    # The install window is waited on in the background, so the menu stays usable;
+    # $PostInstallPath is launched once it closes.
+    $Command = "winget install --id=$AppID -h -e --accept-package-agreements --accept-source-agreements"
+    [void](Start-BackgroundTask -Name "Install $AppID" -ArgumentList $Command -Context @{ PostInstallPath = $PostInstallPath } -ScriptBlock {
+            param($Command)
+            Start-Process -FilePath 'powershell.exe' -ArgumentList '-Command', $Command -Wait
+        } -OnComplete {
+            param($Task)
+            if ($Task.Error) { Show-TrayNotice $Task.Name $Task.Error Error; return }
+            $Path = $Task.Context.PostInstallPath
+            if ($Path -and (Test-Path -LiteralPath $Path)) { Start-Process $Path }
+        })
 }
 
 function WingetCheck {
@@ -784,10 +790,10 @@ function Start-BuddyShell {
     }
 }
 
-# Opens the web address currently on the clipboard in the default browser.
-# Only http/https is launched, so a file path or command sitting on the
-# clipboard can never be executed by a stray middle-click.
-function Open-BuddyClipboardUrl {
+# Returns the web address currently on the clipboard as a [uri], or $null (with a
+# tray notice) when there isn't one. Only http/https is accepted, so a file path
+# or a command sitting on the clipboard is never handed to Start-Process.
+function Get-ClipboardWebUrl {
     $Clip = ''
     try { $Clip = Get-Clipboard -Raw -ErrorAction Stop } catch { }
 
@@ -796,7 +802,7 @@ function Open-BuddyClipboardUrl {
 
     if (-not $Candidate) {
         Show-TrayNotice -Title 'Wizard Buddy' -Text 'Clipboard is empty - copy a web address first.' -Icon 'Warning'
-        return
+        return $null
     }
 
     # Allow a bare host such as google.com or www.site.co.uk/page
@@ -808,8 +814,16 @@ function Open-BuddyClipboardUrl {
     if (-not [uri]::TryCreate($Candidate, [System.UriKind]::Absolute, [ref]$Uri) -or $Uri.Scheme -notin @('http', 'https')) {
         $Shown = $Candidate.Substring(0, [Math]::Min(60, $Candidate.Length))
         Show-TrayNotice -Title 'Wizard Buddy' -Text "Clipboard is not a web address: $Shown" -Icon 'Warning'
-        return
+        return $null
     }
+
+    return $Uri
+}
+
+# Opens the web address currently on the clipboard in the default browser.
+function Open-BuddyClipboardUrl {
+    $Uri = Get-ClipboardWebUrl
+    if (-not $Uri) { return }
 
     try {
         Start-Process $Uri.AbsoluteUri
@@ -817,6 +831,59 @@ function Open-BuddyClipboardUrl {
     }
     catch {
         Show-TrayNotice -Title 'Wizard Buddy' -Text "Could not open $($Uri.AbsoluteUri): $($_.Exception.Message)" -Icon 'Error'
+    }
+}
+
+# $true when Windows Sandbox is installed. Otherwise offers to enable the optional
+# feature in an elevated console and returns $false.
+function Test-WindowsSandbox {
+    if (Test-Path -LiteralPath "$env:SystemRoot\System32\WindowsSandbox.exe") { return $true }
+
+    $Continue = [System.Windows.MessageBox]::Show("Do you want to install Windows Sandbox?", "Windows Sandbox", 'YesNo', 'Warning')
+    if ($Continue -eq 'Yes') {
+        $startParams = @{
+            FilePath     = 'powershell.exe'
+            ArgumentList = '-NoExit', '-Command', 'Enable-WindowsOptionalFeature', '-FeatureName "Containers-DisposableClientVM"', '-All', '-Online'
+            PassThru     = $true
+        }
+        Start-Process @startParams -Verb Runas
+    }
+    return $false
+}
+
+# Writes a throwaway .wsb next to the other Wizard Buddy temp files and launches it.
+# $LogonCommand is the single command line Windows Sandbox runs once the sandbox
+# desktop is up; it is XML-escaped here, so callers pass it verbatim.
+function Start-SandboxSession {
+    param (
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$LogonCommand
+    )
+
+    if (-not (Test-WindowsSandbox)) { return }
+
+    $Directory = Join-Path $env:TEMP 'WizardBuddy'
+    if (-not (Test-Path -LiteralPath $Directory)) {
+        New-Item -Path $Directory -ItemType Directory -Force | Out-Null
+    }
+
+    $WSB = Join-Path $Directory "$Name.wsb"
+    $Escaped = [System.Security.SecurityElement]::Escape($LogonCommand)
+
+    $Config = @"
+<Configuration>
+  <LogonCommand>
+    <Command>$Escaped</Command>
+  </LogonCommand>
+</Configuration>
+"@
+
+    try {
+        Set-Content -LiteralPath $WSB -Value $Config -Encoding UTF8
+        Start-Process $WSB
+    }
+    catch {
+        Show-TrayNotice -Title 'Windows Sandbox' -Text "Could not start the sandbox: $($_.Exception.Message)" -Icon 'Error'
     }
 }
 
@@ -900,6 +967,8 @@ function Start-BackgroundTask {
 # DWM rounded corners for OpsHub-style borderless windows.
 $wbDwmSig = '[DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hwnd, uint attr, ref int pvAttr, uint cbAttr);'
 try { [void](Add-Type -MemberDefinition $wbDwmSig -Name DwmApiWB -Namespace Win32WB -PassThru) } catch { }
+$wbUserSig = '[DllImport("user32.dll")] public static extern bool EnableWindow(IntPtr hWnd, bool bEnable);'
+try { [void](Add-Type -MemberDefinition $wbUserSig -Name UserWB -Namespace Win32WB -PassThru) } catch { }
 
 # Builds a borderless OpsHub-style window around $BodyXaml: Tokyo Night palette, badge + title
 # bar with minimize/close, drag to move, DWM rounded corners. $BodyXaml can use the palette
@@ -1116,10 +1185,61 @@ function Set-UIStatus {
     $UI.StatusText.Visibility = if ($Message) { 'Visible' } else { 'Collapsed' }
 }
 
+#region Tool windows
+# The Show-* tool windows open modeless (Show, not ShowDialog), so the buddy menu stays usable
+# while they are up. Their handlers run after the Show-* function has returned, so they can't
+# see its locals: each window keeps its $UI table in Window.Tag (timers in their own Tag), and
+# every handler starts with $UI = Get-ToolUI $this.
+$ToolWindows = @{}
+
+function Get-ToolUI {
+    param ($Sender)
+    if ($Sender -is [System.Windows.Window] -or $Sender -is [System.Windows.Threading.DispatcherTimer]) {
+        return $Sender.Tag
+    }
+    return [System.Windows.Window]::GetWindow($Sender).Tag
+}
+
+# Brings an already-open tool window to the front. Returns $true if there was one.
+function Resume-ToolWindow {
+    param ([string]$Name)
+    $Window = $ToolWindows[$Name]
+    if (-not $Window) { return $false }
+    if ($Window.WindowState -eq 'Minimized') { $Window.WindowState = 'Normal' }
+    [void]$Window.Activate()
+    return $true
+}
+
+function Show-ToolWindow {
+    param (
+        [string]$Name,
+        [hashtable]$UI
+    )
+    $UI.ToolName = $Name
+    $UI.Window.Tag = $UI
+    $ToolWindows[$Name] = $UI.Window
+    $UI.Window.Add_Closed({ $ToolWindows.Remove($this.Tag.ToolName) })
+    # Without this, a WPF window shown modeless under the WinForms message loop gets no keystrokes.
+    [System.Windows.Forms.Integration.ElementHost]::EnableModelessKeyboardInterop($UI.Window)
+    $UI.Window.Show()
+    [void]$UI.Window.Activate()
+}
+
+# The buddy is shown with ShowDialog, and a WinForms modal loop disables every window on the
+# thread - including tool windows that are already open. The buddy's Shown handler calls this.
+function Enable-ToolWindows {
+    foreach ($Window in @($ToolWindows.Values)) {
+        $Hwnd = [System.Windows.Interop.WindowInteropHelper]::new($Window).Handle
+        if ($Hwnd -ne [IntPtr]::Zero) { [void][Win32WB.UserWB]::EnableWindow($Hwnd, $true) }
+    }
+}
+#endregion Tool windows
+
 #region Speed Test
 # OpsHub-style Speed Test window; the test itself runs in the background (Invoke-SpeedTest).
 function Show-SpeedTest {
-        $Body = @'
+    if (Resume-ToolWindow 'SpeedTest') { return }
+    $Body = @'
 <StackPanel>
     <Grid Margin="0,0,0,12">
         <Grid.ColumnDefinitions>
@@ -1192,50 +1312,452 @@ function Show-SpeedTest {
     </StackPanel>
 </StackPanel>
 '@
-        $SpeedWindow = New-OpsHubWindow -Title 'Speed Test' -Badge 'SPEED' -Width 500 -BodyXaml $Body
-        $UI = $SpeedWindow.UI
-        $UI.Window = $SpeedWindow.Window
+    $SpeedWindow = New-OpsHubWindow -Title 'Speed Test' -Badge 'SPEED' -Width 500 -BodyXaml $Body
+    $UI = $SpeedWindow.UI
+    $UI.Window = $SpeedWindow.Window
 
-        $UI.OpenUrlButton.Add_Click({ Start-Process $UI.UrlBox.Text })
-        $UI.CloseButton.Add_Click({ $UI.Window.Close() })
-        $UI.RunButton.Add_Click({
-                $Started = Start-BackgroundTask -Name 'Speed Test' -ScriptBlock { Invoke-SpeedTest } -Context @{ UI = $UI } -OnComplete {
-                    param($Task)
-                    $UI = $Task.Context.UI
-                    $UI.Progress.Visibility = 'Collapsed'
-                    $UI.RunButton.IsEnabled = $true
-                    if ($Task.Error) {
-                        Set-UIStatus $UI "Speed test failed: $($Task.Error)" Red
-                        if (-not $UI.Window.IsVisible) { Show-TrayNotice 'Speed test failed' $Task.Error Error }
-                        return
-                    }
-                    $r = $Task.Result | Select-Object -Last 1
-                    $UI.DownloadValue.Text = "$($r.DownloadSpeed)"
-                    $UI.UploadValue.Text = "$($r.UploadSpeed)"
-                    $UI.LatencyValue.Text = "$($r.Latency) ms"
-                    $UI.JitterValue.Text = "$($r.Jitter) ms"
-                    $UI.PacketLossValue.Text = "$($r.PacketLoss)%"
-                    $UI.ExternalIPValue.Text = "$($r.ExternalIP)"
-                    $UI.InternalIPValue.Text = "$($r.InternalIP)"
-                    $UI.ServerValue.Text = "$($r.UsedServer)"
-                    $UI.ISPValue.Text = "$($r.ISP)"
-                    $UI.UrlBox.Text = "$($r.URL)"
-                    $UI.OpenUrlButton.IsEnabled = "$($r.URL)" -like 'http*'
-                    Set-UIStatus $UI "Completed at $(Get-Date -Format 'h:mm tt')." Green
-                    if (-not $UI.Window.IsVisible) {
-                        Show-TrayNotice 'Speed test complete' ("Download {0} Mbps, upload {1} Mbps" -f $r.DownloadSpeed, $r.UploadSpeed)
-                    }
+    $UI.OpenUrlButton.Add_Click({ Start-Process (Get-ToolUI $this).UrlBox.Text })
+    $UI.CloseButton.Add_Click({ (Get-ToolUI $this).Window.Close() })
+    $UI.RunButton.Add_Click({
+            $UI = Get-ToolUI $this
+            $Started = Start-BackgroundTask -Name 'Speed Test' -ScriptBlock { Invoke-SpeedTest } -Context @{ UI = $UI } -OnComplete {
+                param($Task)
+                $UI = $Task.Context.UI
+                $UI.Progress.Visibility = 'Collapsed'
+                $UI.RunButton.IsEnabled = $true
+                if ($Task.Error) {
+                    Set-UIStatus $UI "Speed test failed: $($Task.Error)" Red
+                    if (-not $UI.Window.IsVisible) { Show-TrayNotice 'Speed test failed' $Task.Error Error }
+                    return
                 }
-                if (-not $Started) { return }
-                $UI.RunButton.IsEnabled = $false
-                $UI.OpenUrlButton.IsEnabled = $false
-                $UI.Progress.Visibility = 'Visible'
-                Set-UIStatus $UI 'Running speed test (about 30 seconds)...'
-            })
+                $r = $Task.Result | Select-Object -Last 1
+                $UI.DownloadValue.Text = "$($r.DownloadSpeed)"
+                $UI.UploadValue.Text = "$($r.UploadSpeed)"
+                $UI.LatencyValue.Text = "$($r.Latency) ms"
+                $UI.JitterValue.Text = "$($r.Jitter) ms"
+                $UI.PacketLossValue.Text = "$($r.PacketLoss)%"
+                $UI.ExternalIPValue.Text = "$($r.ExternalIP)"
+                $UI.InternalIPValue.Text = "$($r.InternalIP)"
+                $UI.ServerValue.Text = "$($r.UsedServer)"
+                $UI.ISPValue.Text = "$($r.ISP)"
+                $UI.UrlBox.Text = "$($r.URL)"
+                $UI.OpenUrlButton.IsEnabled = "$($r.URL)" -like 'http*'
+                Set-UIStatus $UI "Completed at $(Get-Date -Format 'h:mm tt')." Green
+                if (-not $UI.Window.IsVisible) {
+                    Show-TrayNotice 'Speed test complete' ("Download {0} Mbps, upload {1} Mbps" -f $r.DownloadSpeed, $r.UploadSpeed)
+                }
+            }
+            if (-not $Started) { return }
+            $UI.RunButton.IsEnabled = $false
+            $UI.OpenUrlButton.IsEnabled = $false
+            $UI.Progress.Visibility = 'Visible'
+            Set-UIStatus $UI 'Running speed test (about 30 seconds)...'
+        })
 
-        [void]$SpeedWindow.Window.ShowDialog()
+    Show-ToolWindow -Name 'SpeedTest' -UI $UI
 }
 #endregion Speed Test
+
+#region Password Generator
+function New-RandomPassword {
+    param (
+        [Parameter(Mandatory = $true)]
+        [ValidateRange(1, 512)]
+        [int]$PasswordLength
+    )
+    $ValidCharacters = 48..57 + 65..90 + 97..122 + (
+        '!', '@', '#', '%', '^', '&', '*'
+    ) | ForEach-Object { [char]$_ }
+
+    return (1..$PasswordLength | ForEach-Object { Get-Random $ValidCharacters }) -join ''
+}
+
+# OpsHub-style Password Generator. Generating copies the password to the clipboard.
+function Show-PasswordGenerator {
+    if (Resume-ToolWindow 'PasswordGenerator') { return }
+    $Body = @'
+<StackPanel>
+    <Border Background="{DynamicResource Input}" CornerRadius="6" Padding="14,10" Margin="0,0,0,12">
+        <StackPanel>
+            <TextBlock Text="PASSWORD" Foreground="{DynamicResource Muted}" FontSize="11" FontWeight="SemiBold"/>
+            <TextBox x:Name="PasswordValue" Text="" IsReadOnly="True" TextWrapping="Wrap" FontFamily="Consolas"
+                     FontSize="20" FontWeight="Bold" Foreground="{DynamicResource Accent}" MinHeight="34"
+                     Background="Transparent" BorderBrush="Transparent" Padding="0,4,0,0"/>
+        </StackPanel>
+    </Border>
+
+    <Grid Margin="2,0,0,14">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="70"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <TextBlock Grid.Column="0" Text="Length" Foreground="{DynamicResource Muted}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+        <TextBox Grid.Column="1" x:Name="LengthBox" Text="16" MaxLength="3"/>
+        <TextBlock Grid.Column="2" Text="Letters, digits and ! @ # % ^ &amp; *" Foreground="{DynamicResource Muted}"
+                   VerticalAlignment="Center" Margin="12,0,0,0"/>
+    </Grid>
+
+    <TextBlock x:Name="StatusText" TextWrapping="Wrap" Margin="0,0,0,12" Foreground="{DynamicResource Muted}"
+               Text="Generate a password and it is copied to your clipboard."/>
+
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+        <Button x:Name="CopyButton" Content="Copy" Width="90" Margin="0,0,8,0" IsEnabled="False"/>
+        <Button x:Name="GenerateButton" Content="Generate" Width="110" Margin="0,0,8,0" IsDefault="True" Style="{StaticResource AccentButton}"/>
+        <Button x:Name="CloseButton" Content="Close" Width="80" IsCancel="True"/>
+    </StackPanel>
+</StackPanel>
+'@
+    $PasswordWindow = New-OpsHubWindow -Title 'Password Generator' -Badge 'PASS' -Width 480 -BodyXaml $Body
+    $UI = $PasswordWindow.UI
+    $UI.Window = $PasswordWindow.Window
+
+    $UI.CloseButton.Add_Click({ (Get-ToolUI $this).Window.Close() })
+    $UI.CopyButton.Add_Click({
+            $UI = Get-ToolUI $this
+            if ($UI.PasswordValue.Text) {
+                Set-Clipboard $UI.PasswordValue.Text
+                Set-UIStatus $UI 'Copied to clipboard.' Green
+            }
+        })
+    $UI.GenerateButton.Add_Click({
+            $UI = Get-ToolUI $this
+            $Length = 0
+            if (-not [int]::TryParse($UI.LengthBox.Text, [ref]$Length) -or $Length -lt 4 -or $Length -gt 128) {
+                Set-UIStatus $UI 'Enter a password length between 4 and 128.' Red
+                return
+            }
+
+            $Password = New-RandomPassword -PasswordLength $Length
+            $UI.PasswordValue.Text = $Password
+            Set-Clipboard $Password
+            $UI.CopyButton.IsEnabled = $true
+            Set-UIStatus $UI "$Length characters, copied to clipboard." Green
+        })
+
+    $UI.Window.Add_ContentRendered({ [void](Get-ToolUI $this).GenerateButton.Focus() })
+    Show-ToolWindow -Name 'PasswordGenerator' -UI $UI
+}
+#endregion Password Generator
+
+#region Scroll Jiggler
+# OpsHub-style Scroll Lock jiggler: toggles Scroll Lock on a timer so the session
+# looks active. The timer is a DispatcherTimer, so it stops when the window closes.
+function Show-ScrollJiggler {
+    if (Resume-ToolWindow 'ScrollJiggler') { return }
+    $Body = @'
+<StackPanel>
+    <Border Background="{DynamicResource Input}" CornerRadius="6" Padding="14,10" Margin="0,0,0,12">
+        <StackPanel>
+            <TextBlock Text="JIGGLER" Foreground="{DynamicResource Muted}" FontSize="11" FontWeight="SemiBold"/>
+            <TextBlock x:Name="StateValue" Text="STOPPED" FontSize="30" FontWeight="Bold" Foreground="{DynamicResource Red}"/>
+        </StackPanel>
+    </Border>
+
+    <Grid Margin="2,0,0,14">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Grid.Column="0" Text="Every"       Foreground="{DynamicResource Muted}" Margin="0,0,10,5"/>
+        <TextBlock Grid.Row="0" Grid.Column="1" Text="60 seconds"/>
+        <TextBlock Grid.Row="1" Grid.Column="0" Text="Jiggles"     Foreground="{DynamicResource Muted}" Margin="0,0,10,5"/>
+        <TextBlock Grid.Row="1" Grid.Column="1" x:Name="CountValue" Text="0"/>
+        <TextBlock Grid.Row="2" Grid.Column="0" Text="Last jiggle" Foreground="{DynamicResource Muted}" Margin="0,0,10,5"/>
+        <TextBlock Grid.Row="2" Grid.Column="1" x:Name="LastValue" Text="--"/>
+    </Grid>
+
+    <TextBlock x:Name="StatusText" TextWrapping="Wrap" Margin="0,0,0,12" Foreground="{DynamicResource Muted}"
+               Text="Taps Scroll Lock twice a minute. Stops when this window closes."/>
+
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+        <Button x:Name="ToggleButton" Content="Start" Width="110" Margin="0,0,8,0" IsDefault="True" Style="{StaticResource AccentButton}"/>
+        <Button x:Name="CloseButton" Content="Close" Width="80" IsCancel="True"/>
+    </StackPanel>
+</StackPanel>
+'@
+    $JigglerWindow = New-OpsHubWindow -Title 'Scroll Jiggler' -Badge 'AWAKE' -Width 460 -BodyXaml $Body
+    $UI = $JigglerWindow.UI
+    $UI.Window = $JigglerWindow.Window
+    $UI.Jiggles = 0
+
+    $UI.Timer = New-Object System.Windows.Threading.DispatcherTimer
+    $UI.Timer.Interval = [TimeSpan]::FromSeconds(60)
+    $UI.Timer.Tag = $UI
+    $UI.Timer.Add_Tick({
+            $UI = Get-ToolUI $this
+            $Shell = New-Object -ComObject WScript.Shell
+            $Shell.SendKeys('{SCROLLLOCK}')
+            Start-Sleep -Milliseconds 100
+            $Shell.SendKeys('{SCROLLLOCK}')
+
+            $UI.Jiggles++
+            $UI.CountValue.Text = "$($UI.Jiggles)"
+            $UI.LastValue.Text = (Get-Date -Format 'h:mm:ss tt')
+        })
+
+    $UI.ToggleButton.Add_Click({
+            $UI = Get-ToolUI $this
+            $Timer = $UI.Timer
+            if ($Timer.IsEnabled) {
+                $Timer.Stop()
+                $UI.ToggleButton.Content = 'Start'
+                $UI.StateValue.Text = 'STOPPED'
+                $UI.StateValue.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'Red')
+                Set-UIStatus $UI 'Stopped.' Muted
+            }
+            else {
+                $Timer.Start()
+                $UI.ToggleButton.Content = 'Stop'
+                $UI.StateValue.Text = 'RUNNING'
+                $UI.StateValue.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, 'Green')
+                Set-UIStatus $UI 'Keeping this session awake.' Green
+            }
+        })
+
+    $UI.CloseButton.Add_Click({ (Get-ToolUI $this).Window.Close() })
+    $UI.Window.Add_Closed({ (Get-ToolUI $this).Timer.Stop() })
+
+    Show-ToolWindow -Name 'ScrollJiggler' -UI $UI
+}
+#endregion Scroll Jiggler
+
+#region SimpleHelp Spy Detection
+# OpsHub-style front end for the SimpleHelp watcher. The watch itself is a background
+# job named SimpHelp, so it keeps running after this window is closed.
+function Update-SpyDetectionUI {
+    param ([hashtable]$UI)
+    $Job = Get-Job -Name 'SimpHelp' -ErrorAction SilentlyContinue
+    $Running = $Job -and $Job.State -eq 'Running'
+
+    $UI.ToggleButton.Content = if ($Running) { 'Stop' } else { 'Start' }
+    $UI.StateValue.Text = if ($Running) { 'WATCHING' } else { 'STOPPED' }
+    $UI.StateValue.SetResourceReference([System.Windows.Controls.TextBlock]::ForegroundProperty, $(if ($Running) { 'Green' } else { 'Red' }))
+
+    $Hits = @()
+    if (Test-Path -LiteralPath $UI.LogPath) { $Hits = @(Get-Content -LiteralPath $UI.LogPath | Where-Object { $_.Trim() }) }
+
+    $UI.CountValue.Text = "$($Hits.Count)"
+    $UI.LastValue.Text = if ($Hits.Count) { $Hits[-1] } else { '--' }
+    $UI.LogValue.Text = if ($Hits.Count) { $UI.LogPath } else { 'none' }
+    $UI.OpenLogButton.IsEnabled = [bool]$Hits.Count
+    $UI.DeleteLogButton.IsEnabled = [bool]$Hits.Count
+
+    if ($Hits.Count) {
+        Set-UIStatus $UI "$($Hits.Count) detection(s) logged - someone may have been watching." Red
+    }
+}
+
+function Show-SimpleHelpSpyDetection {
+    if (Resume-ToolWindow 'SimpleHelpSpyDetection') { return }
+    $Body = @'
+<StackPanel>
+    <Border Background="{DynamicResource Input}" CornerRadius="6" Padding="14,10" Margin="0,0,0,12">
+        <StackPanel>
+            <TextBlock Text="WATCHER" Foreground="{DynamicResource Muted}" FontSize="11" FontWeight="SemiBold"/>
+            <TextBlock x:Name="StateValue" Text="STOPPED" FontSize="30" FontWeight="Bold" Foreground="{DynamicResource Red}"/>
+        </StackPanel>
+    </Border>
+
+    <Grid Margin="2,0,0,14">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Grid.Column="0" Text="Detections"     Foreground="{DynamicResource Muted}" Margin="0,0,10,5"/>
+        <TextBlock Grid.Row="0" Grid.Column="1" x:Name="CountValue" Text="0"/>
+        <TextBlock Grid.Row="1" Grid.Column="0" Text="Last detection" Foreground="{DynamicResource Muted}" Margin="0,0,10,5"/>
+        <TextBlock Grid.Row="1" Grid.Column="1" x:Name="LastValue" Text="--" TextTrimming="CharacterEllipsis"/>
+        <TextBlock Grid.Row="2" Grid.Column="0" Text="Log file"       Foreground="{DynamicResource Muted}" Margin="0,0,10,5"/>
+        <TextBlock Grid.Row="2" Grid.Column="1" x:Name="LogValue" Text="--" TextTrimming="CharacterEllipsis"/>
+    </Grid>
+
+    <TextBlock x:Name="StatusText" TextWrapping="Wrap" Margin="0,0,0,12" Foreground="{DynamicResource Muted}"
+               Text="Watches for more than two Remote Access processes, chimes and logs the time."/>
+
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+        <Button x:Name="OpenLogButton" Content="Open Log" Width="90" Margin="0,0,8,0" IsEnabled="False"/>
+        <Button x:Name="DeleteLogButton" Content="Delete Log" Width="90" Margin="0,0,8,0" IsEnabled="False"/>
+        <Button x:Name="ToggleButton" Content="Start" Width="90" Margin="0,0,8,0" IsDefault="True" Style="{StaticResource AccentButton}"/>
+        <Button x:Name="CloseButton" Content="Close" Width="80" IsCancel="True"/>
+    </StackPanel>
+</StackPanel>
+'@
+    $SpyWindow = New-OpsHubWindow -Title 'SimpleHelp Spy Detection' -Badge 'SPY' -Width 520 -BodyXaml $Body
+    $UI = $SpyWindow.UI
+    $UI.Window = $SpyWindow.Window
+    $UI.LogPath = "$env:TEMP\Logix.txt"
+
+    $UI.Timer = New-Object System.Windows.Threading.DispatcherTimer
+    $UI.Timer.Interval = [TimeSpan]::FromSeconds(5)
+    $UI.Timer.Tag = $UI
+    $UI.Timer.Add_Tick({ Update-SpyDetectionUI (Get-ToolUI $this) })
+
+    $UI.ToggleButton.Add_Click({
+            $UI = Get-ToolUI $this
+            $Job = Get-Job -Name 'SimpHelp' -ErrorAction SilentlyContinue
+            if ($Job -and $Job.State -eq 'Running') {
+                Stop-Job -Name 'SimpHelp' -ErrorAction SilentlyContinue
+                Remove-Job -Name 'SimpHelp' -Force -ErrorAction SilentlyContinue
+                Set-UIStatus $UI 'Watcher stopped.' Muted
+            }
+            else {
+                Remove-Job -Name 'SimpHelp' -Force -ErrorAction SilentlyContinue
+                Start-Job -Name 'SimpHelp' -ScriptBlock {
+                    while ($true) {
+                        $Number = @(Get-Process 'Remote Access' -ErrorAction SilentlyContinue).Count
+                        if ($Number -gt 2) {
+                            (New-Object System.Media.SoundPlayer $(Get-ChildItem -Path "$env:windir\Media\Ring05.wav").FullName).Play()
+                            Get-Date | Out-File "$env:TEMP\Logix.txt" -Append
+                        }
+                        Start-Sleep 12
+                    }
+                } | Out-Null
+                Set-UIStatus $UI 'Watching for extra Remote Access processes.' Green
+            }
+            Update-SpyDetectionUI $UI
+        })
+
+    $UI.OpenLogButton.Add_Click({ Start-Process notepad.exe (Get-ToolUI $this).LogPath })
+    $UI.DeleteLogButton.Add_Click({
+            $UI = Get-ToolUI $this
+            $Continue = [System.Windows.MessageBox]::Show("Are you sure you want to delete the log file?", "SimpleHelp Spy Detection", 'YesNo', 'Warning')
+            if ($Continue -eq 'Yes') {
+                Remove-Item -LiteralPath $UI.LogPath -Force -ErrorAction SilentlyContinue
+                Set-UIStatus $UI 'Log deleted.' Muted
+                Update-SpyDetectionUI $UI
+            }
+        })
+
+    $UI.CloseButton.Add_Click({ (Get-ToolUI $this).Window.Close() })
+    $UI.Window.Add_Closed({ (Get-ToolUI $this).Timer.Stop() })
+
+    Update-SpyDetectionUI $UI
+    $UI.Timer.Start()
+    Show-ToolWindow -Name 'SimpleHelpSpyDetection' -UI $UI
+}
+#endregion SimpleHelp Spy Detection
+
+#region Base64 Wizard
+# Picks an extension for decoded bytes from their leading signature; 'bin' when unrecognised.
+function Get-Base64FileExtension {
+    param ([byte[]]$Bytes)
+    $Signatures = [ordered]@{
+        '89504E47' = 'png'; 'FFD8FF' = 'jpg'; '47494638' = 'gif'; '25504446' = 'pdf'
+        '504B0304' = 'zip'; '00000100' = 'ico'; '424D' = 'bmp'; '4D5A' = 'exe'
+    }
+    $Hex = -join ($Bytes | Select-Object -First 4 | ForEach-Object { $_.ToString('X2') })
+    foreach ($Signature in $Signatures.GetEnumerator()) {
+        if ($Hex.StartsWith($Signature.Key)) { return $Signature.Value }
+    }
+    return 'bin'
+}
+
+function ConvertTo-Base64Clipboard {
+    param (
+        [hashtable]$UI,
+        [string]$Path
+    )
+    try {
+        $Item = Get-Item -LiteralPath $Path -ErrorAction Stop
+        if ($Item.PSIsContainer) { Set-UIStatus $UI 'That is a folder - drop a file.' Red; return }
+        if ($Item.Length -gt 50MB) { Set-UIStatus $UI "$($Item.Name) is over 50 MB, too big to put on the clipboard." Red; return }
+
+        Set-Clipboard -Value ([Convert]::ToBase64String([System.IO.File]::ReadAllBytes($Item.FullName)))
+        Set-UIStatus $UI ("{0} ({1:N1} KB) encoded and copied to the clipboard." -f $Item.Name, ($Item.Length / 1KB)) Green
+    }
+    catch { Set-UIStatus $UI "Could not encode: $($_.Exception.Message)" Red }
+}
+
+# Decodes the Base64 on the clipboard into a file in Downloads.
+function Save-Base64Clipboard {
+    param ([hashtable]$UI)
+    $Text = Get-Clipboard -Raw
+    if (-not $Text) { Set-UIStatus $UI 'The clipboard is empty.' Red; return }
+
+    # Accept a data: URI (data:image/png;base64,...) as well as bare Base64.
+    $Text = ($Text -replace '^\s*data:[^,]*,', '').Trim()
+    try { $Bytes = [Convert]::FromBase64String($Text) }
+    catch { Set-UIStatus $UI 'The clipboard does not hold valid Base64.' Red; return }
+
+    try {
+        $Folder = (New-Object -ComObject Shell.Application).NameSpace('shell:Downloads').Self.Path
+        $File = Join-Path $Folder ('Base64-{0:yyyyMMdd-HHmmss}.{1}' -f (Get-Date), (Get-Base64FileExtension $Bytes))
+        [System.IO.File]::WriteAllBytes($File, $Bytes)
+    }
+    catch { Set-UIStatus $UI "Could not save: $($_.Exception.Message)" Red; return }
+
+    $UI.SavedFile = $File
+    $UI.ShowFileButton.IsEnabled = $true
+    Set-UIStatus $UI "Saved $(Split-Path $File -Leaf) to $Folder." Green
+}
+
+# OpsHub-style Base64 converter: drop (or choose) a file to copy its Base64 to the clipboard,
+# or decode Base64 from the clipboard into a file in Downloads.
+function Show-Base64Wizard {
+    if (Resume-ToolWindow 'Base64Wizard') { return }
+    $Body = @'
+<StackPanel>
+    <Border x:Name="DropZone" AllowDrop="True" Background="{DynamicResource Input}" BorderBrush="{DynamicResource Border}"
+            BorderThickness="1" CornerRadius="6" Padding="14,22" Margin="0,0,0,12">
+        <StackPanel HorizontalAlignment="Center">
+            <TextBlock Text="DROP A FILE HERE" HorizontalAlignment="Center" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource Accent}"/>
+            <TextBlock Text="Its Base64 is copied to the clipboard." HorizontalAlignment="Center" Foreground="{DynamicResource Muted}" Margin="0,4,0,0"/>
+        </StackPanel>
+    </Border>
+
+    <TextBlock x:Name="StatusText" TextWrapping="Wrap" Margin="0,0,0,12" Foreground="{DynamicResource Muted}"
+               Text="To go the other way, copy Base64 text and click Decode Clipboard. The file is saved to Downloads."/>
+
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+        <Button x:Name="BrowseButton" Content="Choose File..." Width="110" Margin="0,0,8,0"/>
+        <Button x:Name="ShowFileButton" Content="Show File" Width="90" Margin="0,0,8,0" IsEnabled="False"/>
+        <Button x:Name="DecodeButton" Content="Decode Clipboard" Width="130" Margin="0,0,8,0" IsDefault="True" Style="{StaticResource AccentButton}"/>
+        <Button x:Name="CloseButton" Content="Close" Width="80" IsCancel="True"/>
+    </StackPanel>
+</StackPanel>
+'@
+    $Base64Window = New-OpsHubWindow -Title 'Base64 Wizard' -Badge 'B64' -Width 520 -BodyXaml $Body
+    $UI = $Base64Window.UI
+    $UI.Window = $Base64Window.Window
+
+    $UI.DropZone.Add_DragOver({
+            param($s, $e)
+            $e.Effects = if ($e.Data.GetDataPresent([System.Windows.DataFormats]::FileDrop)) { 'Copy' } else { 'None' }
+            $e.Handled = $true
+        })
+    $UI.DropZone.Add_DragEnter({ $this.SetResourceReference([System.Windows.Controls.Border]::BorderBrushProperty, 'Accent') })
+    $UI.DropZone.Add_DragLeave({ $this.SetResourceReference([System.Windows.Controls.Border]::BorderBrushProperty, 'Border') })
+    $UI.DropZone.Add_Drop({
+            param($s, $e)
+            $this.SetResourceReference([System.Windows.Controls.Border]::BorderBrushProperty, 'Border')
+            $Files = @($e.Data.GetData([System.Windows.DataFormats]::FileDrop))
+            if ($Files.Count) { ConvertTo-Base64Clipboard (Get-ToolUI $this) $Files[0] }
+        })
+
+    $UI.BrowseButton.Add_Click({
+            $UI = Get-ToolUI $this
+            $Dialog = New-Object Microsoft.Win32.OpenFileDialog
+            $Dialog.Title = 'Choose a file to encode'
+            if ($Dialog.ShowDialog($UI.Window)) { ConvertTo-Base64Clipboard $UI $Dialog.FileName }
+        })
+    $UI.DecodeButton.Add_Click({ Save-Base64Clipboard (Get-ToolUI $this) })
+    $UI.ShowFileButton.Add_Click({ Start-Process explorer.exe "/select,`"$((Get-ToolUI $this).SavedFile)`"" })
+    $UI.CloseButton.Add_Click({ (Get-ToolUI $this).Window.Close() })
+
+    Show-ToolWindow -Name 'Base64Wizard' -UI $UI
+}
+#endregion Base64 Wizard
 
 function Restart-Explorer {
     Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
@@ -1304,8 +1826,8 @@ $Systray_Tool_Icon.Add_Click({
             # Load initial buddy image and size form to match
             $loadedImage = Get-IconFromBase64 $WizardIconBase64
             $pictureBox.Image = $loadedImage
-            $pictureBox.Size  = $loadedImage.Size
-            $form.Size        = $loadedImage.Size
+            $pictureBox.Size = $loadedImage.Size
+            $form.Size = $loadedImage.Size
             $form.Controls.Add($pictureBox)
 
             # Adjust PictureBox size and location on form resize
@@ -1378,6 +1900,16 @@ $Systray_Tool_Icon.Add_Click({
             $contextMenu = New-Object System.Windows.Forms.ContextMenuStrip
             $pictureBox.ContextMenuStrip = $contextMenu
 
+            #ComputerName
+            $menuItemComputerName = Add-MenuItem -Menu $ContextMenu -Text $env:COMPUTERNAME -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAYAAADE6YVjAAABfUlEQVRIS2NkoANgpIMdDNSwpAfoUAc0x5oC+f+B+AwQm1BsSUhawX9WNjasAfL23WuGXcvmU8UnIBfjBSCfEFSEz4TWKfMZODg4sfvkwweGtpIMsE/+985ZQcgxOA3h5mBnePf6FcO/f38x1HDyCyEsAcm2FoURb9HP9wzVU3czVPXMABtCCMCD69/tZYTUIuQ/32dgMqoGWyIrLsHAwcmFVe+7D+8YilMiIMEFUkGJJZmxAVgtYWVlY/j9+xflltAluG7dusFATD6hKLhGLSGclJGSMHJw/fj6lWH9/KkMkTllYDOQyy6yixVQPkG2ZPmULoYvNTUMPC0tYItQLKGkWEG3BBYM6JaAxJdCJaOR2AzyalpRIPGHt66BKKxFArCojyImCeOMg8LmPnBQ9tcWgSisdQ96fQIKMmxxgm4JoThCsYxsS7DF0bfv3xm+//wJKnVvAF2lCXMZJTUjqG7GBp4BBf3QJLqAfCc86Z7yOp5wpsIRmcRoJEUNAKDb9Afh99TOAAAAAElFTkSuQmCC'
+            $menuItemComputerName.Add_Click({
+                    Set-Clipboard $env:computername
+                    Toast
+                })
+
+            $SeparatorTop = New-Object System.Windows.Forms.ToolStripSeparator
+            $contextmenu.Items.Add($SeparatorTop)
+
             #region Buddies
 
             # Create "Buddies" submenu container
@@ -1433,9 +1965,7 @@ $Systray_Tool_Icon.Add_Click({
             $ApplicationMenu = Add-MenuItem -Menu $ContextMenu -Text "Applications" -IconBase64 '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'
     
             $Base64Converter = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Base64 Wizard" -IconBase64 $DogIcon
-            $Base64Converter.Add_Click({
-                    Start-Process pwsh -ArgumentList "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$PSScriptRoot\Get-Base64.ps1`""
-                })
+            $Base64Converter.Add_Click({ Show-Base64Wizard })
 
             $ClickPaste = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Click Paste" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAYAAADE6YVjAAAC00lEQVRIS7WWOYyOQRjHbVxxFo5CtygkJIhQIBoKsptdRwiCUDkqGiQiEkIidASJIwq3wpVdjaMh7jgLFLKrRrGuYMn6/b7MfBlv5vv2U+wkv8z7zjwz/3fmmXmet65X5dKHrpEwCebDdBgDA+A7tME9uAov4QP8zk1Xl2m0bTQsguVBpHeVj/lD3zM4D5egHbpS+5zITAx2gXX/KpMXu37ScBd2hBWW+4sik+m5BcOSGb7wfA3OQmvS3sjzCmiGwUn7J55ng1tYKlHEekaYLAp85N393g9vg326DY6RcbAliA0Pdgopfh+6oogOPRa+QLt3sBvOQGfylUWR2NWXh1WwHfSn5SashTZFPEWbwqT6wBVszgg4cGIiWN6O0BaF9vHuivTRNjigyChogSnB+AT1hsIKkrmrPvaj9yisDlZPqJsUmRdEPKY6eRpEH9Q6eWo3npdHMAi8N42KHIH1wUofrKwys3chlmUV7JzzAiwJ/YdseA7eaovH8noVkUqOLw7xZHkyLU8V+QxDMhMrHJ3rCpYGu6/UMbT4xXFFHooXmXk6FPGIesKKJScSj7z2jqtFpNNBHTC0B0VKK+kJnxi1r6Q+OcyL98JifPJ0/RNFk1XWerouMmZxGFc6XXPBwOc90anekzeZ7au1aQKG3pOB4D1piDfeKDs1zHKSeh2kMatWAW/8cTCOWR5Dc4xdG3nZA8YuI6hR9VRGqLvYtYYxe8FI/gOMXQfTKGzMmRO+wNRqFD4Nv5JlVLqMrsB45aT1wf4GtVG4Pc0n5nC3Lc0JBk6j6mtQIJdPjFVbwWiR5qIm3h86ppgZ3Y7biZAf9Q0MNa4qhgrbF4AnsQF0ciymCjPjq9iQy/FmyJ0wC/4nx+uDO2COf5CIltNvsa2ehoXg34p5Pxd24hiPqX8r5+AyvIdu/1biYCceAW6hUVWfjQW3xv8uU7Q53C10a9ym7H/XX2JcoXmg/8/OAAAAAElFTkSuQmCC'
             Add-ShellContextMenuHandler -MenuItem $ClickPaste -FilePath "C:\ProgramData\ClickPaste\ClickPaste.exe"
@@ -1461,13 +1991,19 @@ $Systray_Tool_Icon.Add_Click({
 
             $GPupdate = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Group Policy Update" -FilePath "$env:SystemRoot\System32\cmd.exe"
             $GPupdate.add_Click({
-                    $proc = Start-Process gpupdate -ArgumentList '/force' -Wait -PassThru -WindowStyle Hidden
-                    if ($proc.ExitCode -eq 0) {
-                        [System.Windows.Forms.MessageBox]::Show("Computer Policy update has completed successfully.`nUser Policy update has completed successfully.", 'Update Group Policy', 'OK', 'Information')
+                    # gpupdate takes a while, so it is waited on in the background.
+                    $Started = Start-BackgroundTask -Name 'Group Policy Update' -ScriptBlock {
+                        (Start-Process gpupdate -ArgumentList '/force' -Wait -PassThru -WindowStyle Hidden).ExitCode
+                    } -OnComplete {
+                        param($Task)
+                        if (-not $Task.Error -and ($Task.Result | Select-Object -Last 1) -eq 0) {
+                            [System.Windows.Forms.MessageBox]::Show("Computer Policy update has completed successfully.`nUser Policy update has completed successfully.", 'Update Group Policy', 'OK', 'Information')
+                        }
+                        else {
+                            [System.Windows.Forms.MessageBox]::Show("Group Policy update failed.", 'Update Group Policy', 'OK', 'Error')
+                        }
                     }
-                    else {
-                        [System.Windows.Forms.MessageBox]::Show("Group Policy update failed.", 'Update Group Policy', 'OK', 'Error')
-                    }
+                    if ($Started) { Show-TrayNotice 'Update Group Policy' 'Running gpupdate /force...' }
                 })
 
             $HyperV_Mgr = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Hyper V Manager" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAADsElEQVRIS7WWaUhUURTH/++90cosAhOyLxkUZH4oUCIq1DSdNoqKSJM2s6yIyIwWbS+qL20QUaEV7djillYUki1YiFGQlablFzO1qHRa1HnzOue9d+eNadMQdOHOneXe/++c/z3nMRL+85B80R9W9X5drQsHeG+ojIr68MFjfDnHe/4ICH7VuKjFqZ3xJhRukz5UhYWEeNvTBRD6sjGnXtVSfIpO4130oqrAVwcQM7LHYPUv066UaPYpCZj9rtknbaguQ7T1G/CzHXA6gaSoPwNSLxdq9ml22GQJNkmCvyTDXtvUFeZiURJs/W6JchYavfBM/gsgO68IaGpAUUkBFIIoFE+lKiGzshZoY9EOsoMi1egHIaqvBHbRuiDGewYJUxOgUAZ96MDUjJ1A9XPsLbmBzOInRibCc3fUprAOoLkozjeAsKmCgu2vyFh3gwCeVvAHjpiFRfQMWBLvHZBd+Qp4+xoF507o98AAf1lGpg4wfRaW8MqiPPk9V1LqZN8zmLn9IMGqsSv7GLbdfmoCTDERvQC4SJyrKm2a74DyDg29yR49g8Jyywrhtx45TY587OhupZ0yyK//qeDgNncnc5kGBg3E4fOXET9iKCJWrrIA+Y+6+x0Z7r1fPrcCLV+AOWPJbBp6H1AVyVRFDztceH73PkqLizF+VBgeBYeZGZieU/RX502EP9Wxn6RgiuiXL9R4H78C7dR4XBRsXXK0BRBlyoBeZI3bomtlxmbhOfmdmxSHp1U12J+VhX1F+djMpSwqzfNuFsZagEkJcUjcsg9yfQ02XDxnAXJLTXETQoAJdeVYv2snWqjpSp+9wKWGH2ZFmVny3XBTptg9LKJHxYN2Vb/YgTKwKXM3UEelO3f5bwAVDxJj8SkgAMsOZSPU1omKIRHWHiHuJAhVlnUHHgB/vYLomcRVdOGWYRGXor6qkKufISdrLer6DYBEnu++Q6WsC5vT2Wk8AFfPsgBKbKzuPYt2AZwtdgsbECeeLJ2BS6qMQJsNezZuB8bFG4JsC68CkD7PABxudJStvZAXtWbxnO6A0wVG+hwdZ0Ajb/lszFqRji3HjqAXdfLWa/e6incSBHQmY74B8BxBx69rnxzfsCMtEZF+MqafuG6Ic2PxoENX2tq18k4X+toUBCgKNp+/6RE52SNGTwBPWODRXM1BF4/o4X0RGUnPbGOsaHZoASTuBnCWwiIPcXcne2/Lnn/d+KbpVk7ZY3tW0nSkn7xq2EcR/77bp38V/xKAOPMLKdEgN0nrvccAAAAASUVORK5CYII='
@@ -1510,109 +2046,7 @@ $Systray_Tool_Icon.Add_Click({
             Add-ShiftClickHandler -MenuItem $NetworkConn -Executable "ncpa.cpl"
             #Password Generator
             $PasswordGen = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Password Generator" -IconBase64 $DogIcon
-            $PasswordGen.add_Click({
-                    Start-Job -ScriptBlock {
-                        param($value)
-                        Add-Type -AssemblyName System.Windows.Forms
-                        Add-Type -AssemblyName System.Drawing
-
-                        #Custom Icon
-                        $IconBytes = [Convert]::FromBase64String($value)
-                        $ims = New-Object IO.MemoryStream($IconBytes, 0, $IconBytes.Length)
-
-                        # Create form
-                        $form = New-Object System.Windows.Forms.Form
-                        $form.Text = "Password Generator"
-                        $form.Size = New-Object System.Drawing.Size(377, 240)
-                        $Form.Icon = [System.Drawing.Icon]::FromHandle((New-Object System.Drawing.Bitmap -Argument $ims).GetHIcon())
-                        $form.TopMost = $true
-                        $form.StartPosition = "CenterScreen"
-                        $form.FormBorderStyle = "FixedDialog"
-                        $Form.BackColor = [System.Drawing.Color]::FromArgb(0, 48, 73)
-                        $form.ShowinTaskbar = $false
-                        $form.ForeColor = 'White'
-
-                        # Create label for password length
-                        $lblPasswordLength = New-Object System.Windows.Forms.Label
-                        $lblPasswordLength.Text = "Password Length:"
-                        $lblPasswordLength.AutoSize = $true
-                        $lblPasswordLength.Location = New-Object System.Drawing.Point(10, 26)
-
-                        # Create label for Clipboard notification
-                        $clipboardnotif = New-Object System.Windows.Forms.Label
-                        $clipboardnotif.Text = "Copied to Clipboard:"
-                        $clipboardnotif.AutoSize = $true
-                        $clipboardnotif.Location = New-Object System.Drawing.Point(10, 63)
-
-                        # Create textbox for password length
-                        $txtPasswordLength = New-Object System.Windows.Forms.TextBox
-                        $txtPasswordLength.Width = 50
-                        $txtPasswordLength.Location = New-Object System.Drawing.Point(120, 26)
-                        $txtPasswordLength.Add_KeyDown({
-                                if ($_.KeyCode -eq 'Enter') {
-                                    $btnGenerate.PerformClick()
-                                }
-                            })
-
-                        # Create button for generating password
-                        $btnGenerate = New-Object System.Windows.Forms.Button
-                        $btnGenerate.Text = "Generate Password"
-                        $btnGenerate.Width = 150
-                        $btnGenerate.Height = 30
-                        $btnGenerate.Location = New-Object System.Drawing.Point(190, 20)
-                        $btnGenerate.Add_Click({
-                                # Clear the outputTextBox
-                                $outputTextBox.Clear()
-                                $PasswordLength = $txtPasswordLength.Text
-                                if ([int]::TryParse($PasswordLength, [ref]$null)) {
-                                    $Password = New-RandomPassword $PasswordLength
-                                    $outputTextBox.AppendText("$Password")
-                                    Set-Clipboard $Password
-                                }
-                                else {
-                                    $outputTextBox.AppendText("Please enter a valid number for password length.`r")
-                                }
-                            })
-
-                        # Create textbox for output
-                        $outputTextBox = New-Object System.Windows.Forms.TextBox
-                        $outputTextBox.Multiline = $true
-                        $outputTextBox.Width = 340
-                        $outputTextBox.Height = 110
-                        $outputTextBox.Location = New-Object System.Drawing.Point(10, 80)
-                        $outputTextBox.ReadOnly = $true
-                        $outputTextBox.TabStop = $false
-                        $outputTextBox.BackColor = [System.Drawing.Color]::White
-
-                        # Function to generate a random password
-                        function New-RandomPassword {
-                            param(
-                                [Parameter(Mandatory = $true)]
-                                [Alias('length')]
-                                [ValidateRange(1, [int]::MaxValue)]  # Set a valid range for password length
-                                [int]$PasswordLength
-                            )
-                            $validCharacters = 48..57 + 65..90 + 97..122 + (
-                                '!', '@', '#', '%', '^', '&', '*'
-                            ) | ForEach-Object { [char]$_ }
-
-                            return (1..$PasswordLength | ForEach-Object {
-                                    Get-Random $validCharacters
-                                }) -join ''
-                        }
-
-                        # Add controls to the form
-                        $form.Controls.Add($lblPasswordLength)
-                        $form.Controls.Add($clipboardnotif)
-                        $form.Controls.Add($txtPasswordLength)
-                        $form.Controls.Add($btnGenerate)
-                        $form.Controls.Add($outputTextBox)
-
-                        # Show the form
-                        $form.Add_Shown({ $form.Activate() })
-                        $form.ShowDialog()
-                    } -ArgumentList $DogIcon
-                })
+            $PasswordGen.add_Click({ Show-PasswordGenerator })
 
             $Powershell = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "PowerShell" -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
             Add-ShiftClickHandler -MenuItem $Powershell -Executable "powershell.exe"
@@ -1654,16 +2088,7 @@ $Systray_Tool_Icon.Add_Click({
                     else {
                         $Continue = [System.Windows.MessageBox]::Show("Do you want to install PuTTY?", "PuTTY", 'YesNo', 'Warning')
                         if ($Continue -eq 'Yes') {
-                            WingetCheck
-                            $startParams = @{
-                                FilePath     = 'powershell.exe'
-                                ArgumentList = '-NoExit', '-Command', 'winget.exe', 'Install', '--id=PuTTY.PuTTY', '-h', '-e', '--accept-package-agreements', '--accept-source-agreements'
-                                PassThru     = $true
-                            }
-                            Start-Process -Wait @startParams
-                        }
-                        If (Test-Path -Path $FileName) {
-                            Start-Process $FileName
+                            Install-Application -AppID 'PuTTY.PuTTY' -PostInstallPath $FileName
                         }
                     }
                 })
@@ -1672,72 +2097,7 @@ $Systray_Tool_Icon.Add_Click({
             Add-ShiftClickHandler -MenuItem $Regedit -Executable "regedit"
 
             $ScrollJiggler = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "Scroll Jiggler" -IconBase64 $DogIcon
-            $ScrollJiggler.add_Click({
-                    Start-Job -ScriptBlock {
-                        param($value)
-                        Add-Type -AssemblyName System.Windows.Forms
-                        Add-Type -AssemblyName System.Drawing
-
-                        #Custom Icon
-                        $IconBytes = [Convert]::FromBase64String($value)
-                        $ims = New-Object IO.MemoryStream($IconBytes, 0, $IconBytes.Length)
-
-                        # Create the GUI Form
-                        $form = New-Object System.Windows.Forms.Form
-                        $form.Text = "Scroll Lock Jiggler"
-                        $form.Size = New-Object System.Drawing.Size(300, 150)
-                        $form.StartPosition = "CenterScreen"
-                        $form.FormBorderStyle = "FixedSingle"
-                        $Form.Icon = [System.Drawing.Icon]::FromHandle((New-Object System.Drawing.Bitmap -Argument $ims).GetHIcon())
-                        $Form.BackColor = [System.Drawing.Color]::FromArgb(0, 48, 73)
-                        $form.MaximizeBox = $false
-                        $form.ShowinTaskbar = $false
-                        $form.TopMost = $true
-
-                        # Add Start/Stop Button
-                        $button = New-Object System.Windows.Forms.Button
-                        $button.Size = New-Object System.Drawing.Size(100, 40)
-                        $button.Location = New-Object System.Drawing.Point(95, 40)
-                        $button.Text = "Start"
-                        $button.BackColor = 'LightGreen'
-                        $form.Controls.Add($button)
-
-                        # Create the timer
-                        $timer = New-Object System.Windows.Forms.Timer
-                        $timer.Interval = 60000  # 60 seconds
-
-                        $timer.Add_Tick({
-                                $wshell = New-Object -ComObject WScript.Shell
-                                $wshell.SendKeys("{SCROLLLOCK}")
-                                Start-Sleep -Milliseconds 100
-                                $wshell.SendKeys("{SCROLLLOCK}")
-                            })
-
-                        # Toggle color on click
-                        $button.Add_Click({
-                                if ($button.BackColor -eq 'LightGreen') {
-                                    $button.Text = "Stop"
-                                    $button.BackColor = 'Tomato'
-                                    $timer.Start()
-                                }
-                                else {
-                                    $button.Text = "Start"
-                                    $button.BackColor = 'LightGreen'
-                                    $timer.Stop()
-                                }
-                            })
-
-                        # Cleanup when the form is closed
-                        $form.add_FormClosing({
-                                if ($timer.Enabled) {
-                                    $timer.Stop()
-                                }
-                            })
-
-                        # Run the form
-                        [void]$form.ShowDialog()
-                    } -ArgumentList $DogIcon
-                })
+            $ScrollJiggler.add_Click({ Show-ScrollJiggler })
 
             $Sys_Prop = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "System Properties" -FilePath "$env:SystemRoot\System32\sysdm.cpl"
             $Sys_Prop.add_Click({ 
@@ -1758,67 +2118,85 @@ $Systray_Tool_Icon.Add_Click({
             # Each tweak row uses the cog icon ($SettingsIcon). Undo puts values back to the Windows
             # default: Default when given, otherwise the value is deleted (UndoPath = key to delete
             # for key-default settings). "All of the Below" covers every row except ExcludeFromAll.
-            $RegAdvanced    = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+            $RegAdvanced = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
             $RegPersonalize = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize'
             $CustomizeRows = @(
                 @{ Text = 'Dark Mode'; Separator = $true; Registry = @(
                         @{ Path = $RegPersonalize; Name = 'AppsUseLightTheme'; Value = 0; Default = 1; Type = 'Dword' }
                         @{ Path = $RegPersonalize; Name = 'SystemUsesLightTheme'; Value = 0; Default = 1; Type = 'Dword' }
-                    ) }
+                    ) 
+                }
                 @{ Text = 'End Task in Taskbar Menu'; Registry = @(
                         @{ Path = "$RegAdvanced\TaskbarDeveloperSettings"; Name = 'TaskbarEndTask'; Value = 1; Type = 'Dword' }
-                    ) }
+                    ) 
+                }
                 @{ Text = 'Explorer Opens to This PC'; Registry = @(
                         @{ Path = $RegAdvanced; Name = 'LaunchTo'; Value = 1; Type = 'Dword' }
-                    ) }
+                    ) 
+                }
                 @{ Text = 'Hide Recycle Bin Desktop Icon'; Registry = @(
                         @{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel'; Name = '{645FF040-5081-101B-9F08-00AA002F954E}'; Value = 1; Type = 'Dword' }
-                    ) }
+                    ) 
+                }
                 @{ Text = 'Hide Task View Button'; Registry = @(
                         @{ Path = $RegAdvanced; Name = 'ShowTaskViewButton'; Value = 0; Type = 'Dword' }
-                    ) }
+                    ) 
+                }
                 # Windows 11 protects this value on newer builds (UCPD); the write may be refused, which is reported.
                 @{ Text = 'Hide Widgets'; ExcludeFromAll = $true; Registry = @(
                         @{ Path = $RegAdvanced; Name = 'TaskbarDa'; Value = 0; Type = 'Dword' }
-                    ) }
+                    ) 
+                }
                 # Policy key: standard users may not be able to write it (reported if so).
                 @{ Text = 'No Bing in Start Search'; Registry = @(
                         @{ Path = 'HKCU:\Software\Policies\Microsoft\Windows\Explorer'; Name = 'DisableSearchBoxSuggestions'; Value = 1; Type = 'Dword' }
-                    ) }
+                    ) 
+                }
                 @{ Text = 'No Start Recommendations'; Registry = @(
                         @{ Path = $RegAdvanced; Name = 'Start_IrisRecommendations'; Value = 0; Type = 'Dword' }
-                    ) }
+                    ) 
+                }
                 @{ Text = 'Old Context Menu'; Registry = @(
                         @{ Path = 'HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32'; Value = ''; Type = 'String'
-                            UndoPath = 'HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}' }
-                    ) }
+                            UndoPath = 'HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}' 
+                        }
+                    ) 
+                }
                 @{ Text = 'Per-display Taskbar Buttons'; Registry = @(
                         @{ Path = $RegAdvanced; Name = 'MMTaskbarMode'; Value = 2; Type = 'Dword' }
-                    ) }
+                    ) 
+                }
                 @{ Text = 'Remove Search Bar'; Registry = @(
                         @{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search'; Name = 'SearchboxTaskbarMode'; Value = 0; Type = 'Dword' }
-                    ) }
+                    ) 
+                }
                 # Needs admin (HKLM). Without it, the other settings still apply and this one is reported.
                 @{ Text = 'Remove Shortcut Arrows'; Registry = @(
                         @{ Path = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Icons'; Name = '29'; Value = '%windir%\System32\shell32.dll,-50'; Type = 'String' }
-                    ) }
+                    ) 
+                }
                 @{ Text = 'Remove Teams Icon'; Registry = @(
                         @{ Path = $RegAdvanced; Name = 'TaskbarMn'; Value = 0; Type = 'Dword' }
-                    ) }
+                    ) 
+                }
                 @{ Text = 'Show Clock Seconds'; Registry = @(
                         @{ Path = $RegAdvanced; Name = 'ShowSecondsInSystemClock'; Value = 1; Type = 'Dword' }
-                    ) }
+                    ) 
+                }
                 # Shows hidden files AND file extensions.
                 @{ Text = 'Show Hidden Extensions'; Registry = @(
                         @{ Path = $RegAdvanced; Name = 'Hidden'; Value = 1; Default = 2; Type = 'Dword' }
                         @{ Path = $RegAdvanced; Name = 'HideFileExt'; Value = 0; Default = 1; Type = 'Dword' }
-                    ) }
+                    ) 
+                }
                 @{ Text = 'Taskbar Aligned Left'; Registry = @(
                         @{ Path = $RegAdvanced; Name = 'TaskbarAl'; Value = 0; Type = 'Dword' }
-                    ) }
+                    ) 
+                }
             )
             $AllOfTheBelow = @{ Text = 'All of the Below'; ConfirmUndo = $true; Icon = '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'
-                Registry = @($CustomizeRows | Where-Object { -not $_.ExcludeFromAll } | ForEach-Object { $_.Registry }) }
+                Registry = @($CustomizeRows | Where-Object { -not $_.ExcludeFromAll } | ForEach-Object { $_.Registry }) 
+            }
             Add-TweakMenuItems -ParentMenuItem $CustomizeWindowsMenu -Rows (@($AllOfTheBelow) + $CustomizeRows) -DefaultIcon $SettingsIcon
             #endregion
 
@@ -1926,137 +2304,12 @@ $Systray_Tool_Icon.Add_Click({
                     $startParams = @{
                         FilePath     = 'powershell.exe'
                         ArgumentList = '-NoExit', '-Command', 'ping', 'www.google.com', '-t'
-                        Wait         = $true
-                        PassThru     = $true
                     }
                     Start-Process @startParams
                 })
 
             $SimpleHelpSpyDetection = Add-SubMenuItem -ParentMenuItem $ScriptsMenu -Text "SimpleHelp Spy Detection"
-            $SimpleHelpSpyDetection.add_Click({
-                    # Load Windows Forms assembly
-                    [void] [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
-                    [void] [System.Reflection.Assembly]::LoadWithPartialName("PresentationFramework")
-
-                    #Create Form
-                    $SHSDForm = New-Object Windows.Forms.Form
-                    $SHSDForm.Text = "SimpleHelp Spy Detection"
-                    $SHSDForm.Size = New-Object Drawing.Size(380, 250)
-                    $SHSDForm.StartPosition = "CenterScreen"  # Center the form on the screen
-                    $SHSDForm.FormBorderStyle = "FixedDialog"  # Prevent resizing
-                    $SHSDForm.MaximizeBox = $false  # Disable maximize button
-                    $SHSDForm.ShowinTaskbar = $false
-                    $SHSDForm.TopMost = $true
-                    $SHSDForm.ForeColor = [System.Drawing.Color]::White
-                    $IconBytes = [Convert]::FromBase64String($DogIcon)
-                    $ims = New-Object IO.MemoryStream($IconBytes, 0, $IconBytes.Length)
-                    $SHSDForm.Icon = [System.Drawing.Icon]::FromHandle((New-Object System.Drawing.Bitmap -Argument $ims).GetHIcon())
-
-                    # Set a background color for the form
-                    $Sneaky = "$env:TEMP\Logix.txt"
-                    $SneakyTest = Test-Path $Sneaky -PathType Leaf
-                    if ($SneakyTest -eq "True") {
-                        $SHSDForm.BackColor = [System.Drawing.Color]::Firebrick
-                    }
-                    else {
-                        $SHSDForm.BackColor = [System.Drawing.Color]::FromArgb(0, 48, 73)
-                    }
-
-                    # Create a Start button
-                    $SHSDStartButton = New-Object Windows.Forms.Button
-                    $SHSDStartButton.Text = "Start"
-                    $SHSDStartButton.Size = New-Object Drawing.Size(80, 30)
-                    $SHSDStartButton.Location = New-Object Drawing.Point(50, 150)
-                    $SHSDStartButton.Font = New-Object Drawing.Font("Arial", 12, [System.Drawing.FontStyle]::Bold)
-                    $SHSDStartButton.BackColor = [System.Drawing.Color]::Green
-                    $SHSDStartButton.ForeColor = [System.Drawing.Color]::White
-                    $SHSDStartButton.Add_Click({
-                            $SHSDIndicator.BackColor = [System.Drawing.Color]::Green  # Set indicator color to green
-                            $SHSDIndicator.Text = "Started"  # Set text to "on"
-                            $SHSDIndicator.ForeColor = [System.Drawing.Color]::White
-                            $Sneaky = "$env:TEMP\Logix.txt"
-                            $SneakyTest = Test-Path $Sneaky -PathType Leaf
-                            if ($SneakyTest -eq "True") {
-                                Notepad $Sneaky
-                            }
-                            Remove-Job -Name SimpHelp -Force -ErrorAction SilentlyContinue
-                            Start-Job -Name SimpHelp -ScriptBlock {
-                                $Script:Running = $true
-                                while ($Script:Running) {
-                                    $Process = "Remote Access"
-                                    $Number = @(Get-Process -ErrorAction SilentlyContinue $Process).Count
-                                    if ($Number -gt "2") {
-                                        (New-Object System.Media.SoundPlayer $(Get-ChildItem -Path "$env:windir\Media\Ring05.wav").FullName).Play()
-                                        $Sneaky = "$env:TEMP\Logix.txt"
-                                        Get-Date | Out-File $Sneaky -Append
-                                    }
-                                    Start-Sleep 12
-                                }
-                            }
-                        })
-                    $SHSDForm.Controls.Add($SHSDStartButton)
-
-                    # Create a Stop button
-                    $SHSDStopButton = New-Object Windows.Forms.Button
-                    $SHSDStopButton.Text = "Stop"
-                    $SHSDStopButton.Size = New-Object Drawing.Size(80, 30)
-                    $SHSDStopButton.Location = New-Object Drawing.Point(150, 150)
-                    $SHSDStopButton.Font = New-Object Drawing.Font("Arial", 12, [System.Drawing.FontStyle]::Bold)
-                    $SHSDStopButton.BackColor = [System.Drawing.Color]::Red
-                    $SHSDStopButton.ForeColor = [System.Drawing.Color]::White
-                    $SHSDStopButton.Add_Click({
-                            $SHSDIndicator.BackColor = [System.Drawing.Color]::Red  # Set indicator color to red
-                            $SHSDIndicator.Text = "Stopped"  # Set text to "Off"
-                            $SHSDIndicator.ForeColor = [System.Drawing.Color]::White
-                            Stop-Job -Name SimpHelp -ErrorAction SilentlyContinue
-                            Remove-Job -Name SimpHelp -Force -ErrorAction SilentlyContinue
-                            $Sneaky = "$env:TEMP\Logix.txt"
-                            $SneakyTest = Test-Path $Sneaky -PathType Leaf
-                            if ($SneakyTest -eq "True") {
-                                Notepad $Sneaky
-                            }
-                        })
-                    $SHSDForm.Controls.Add($SHSDStopButton)
-
-                    # Create a Delete button
-                    $SHSDDeleteButton = New-Object Windows.Forms.Button
-                    $SHSDDeleteButton.Text = "Delete"
-                    $SHSDDeleteButton.Size = New-Object Drawing.Size(80, 30)
-                    $SHSDDeleteButton.Location = New-Object Drawing.Point(250, 150)
-                    $SHSDDeleteButton.Font = New-Object Drawing.Font("Arial", 12, [System.Drawing.FontStyle]::Bold)
-                    $SHSDDeleteButton.BackColor = [System.Drawing.Color]::DarkBlue
-                    $SHSDDeleteButton.ForeColor = [System.Drawing.Color]::White
-                    $SHSDDeleteButton.Add_Click({
-                            $Continue = [System.Windows.MessageBox]::Show("Are you sure you want to delete the log file?", "SimpleHelp Spy Detection", 'YesNo', 'Warning')
-                            if ($Continue -eq 'Yes') {
-                                $Sneaky = "$env:TEMP\Logix.txt"
-                                $SneakyTest = Test-Path $Sneaky -PathType Leaf
-                                if ($SneakyTest -eq "True") {
-                                    Remove-Item -Path $Sneaky -Force
-                                    $SHSDForm.BackColor = [System.Drawing.Color]::FromArgb(0, 48, 73)
-                                }
-                            }
-                        })
-                    $SHSDForm.Controls.Add($SHSDDeleteButton)
-
-                    # Create an indicator label
-                    $SHSDIndicator = New-Object Windows.Forms.Label
-                    $SHSDIndicator.Size = New-Object Drawing.Size(130, 80)
-                    $SHSDIndicator.Location = New-Object Drawing.Point(125, 40)
-                    $SHSDIndicator.BorderStyle = [System.Windows.Forms.FormBorderStyle]::Fixed3D
-                    $SHSDIndicator.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter  # Center the text
-                    $SHSDIndicator.BackColor = [System.Drawing.Color]::Red  # Set indicator color to red
-                    $SHSDIndicator.Text = "Stopped"  # Set text to "Off"
-                    $SHSDIndicator.Font = New-Object Drawing.Font("Arial", 14, [System.Drawing.FontStyle]::Bold)
-                    $SHSDIndicator.ForeColor = [System.Drawing.Color]::White
-                    $SHSDForm.Controls.Add($SHSDIndicator)
-
-                    # Show the form
-                    $SHSDForm.Add_FormClosed({
-                            $SHSDForm.Dispose()
-                        })
-                    $SHSDForm.Show()
-                })
+            $SimpleHelpSpyDetection.add_Click({ Show-SimpleHelpSpyDetection })
             #endregion
 
             #region Windows Sandbox
@@ -2144,16 +2397,24 @@ $Systray_Tool_Icon.Add_Click({
                             Start-Process $WSB
                         }
 
-                        #Send Toast Notification when IP is set to clipboard
-                        while ($true) {
-                            $Status = Get-Clipboard
-                            if ($Status -like "172.*") {
-                                [System.Windows.MessageBox]::Show("Your proxy IP Address is: $Status`n`nIt has been copied to your clipboard.", "Proxy IP Address", 'OK', 'Information')
-                                $StatusLoc = "$env:TEMP\$Status"
-                                Get-Clipboard | Out-File -FilePath $StatusLoc -Append
-                                Break
-                            }
-                        }
+                        # Tell the user when the sandbox puts its IP on the clipboard. Polled on a timer
+                        # (not a loop) so the menu stays usable; gives up after 10 minutes.
+                        $ProxyTimer = New-Object System.Windows.Forms.Timer
+                        $ProxyTimer.Interval = 1000
+                        $ProxyTimer.Tag = Get-Date
+                        $ProxyTimer.Add_Tick({
+                                $Status = Get-Clipboard
+                                if ($Status -like "172.*") {
+                                    $this.Stop(); $this.Dispose()
+                                    [System.Windows.MessageBox]::Show("Your proxy IP Address is: $Status`n`nIt has been copied to your clipboard.", "Proxy IP Address", 'OK', 'Information')
+                                    $StatusLoc = "$env:TEMP\$Status"
+                                    Get-Clipboard | Out-File -FilePath $StatusLoc -Append
+                                }
+                                elseif (((Get-Date) - $this.Tag).TotalMinutes -ge 10) {
+                                    $this.Stop(); $this.Dispose()
+                                }
+                            })
+                        $ProxyTimer.Start()
                     }
 
                     $Filename = "C:\Windows\System32\WindowsSandbox.exe"
@@ -2173,14 +2434,39 @@ $Systray_Tool_Icon.Add_Click({
                         } 
                     }
                 })
-            #endregion
 
-            #ComputerName
-            $menuItemComputerName = Add-MenuItem -Menu $ContextMenu -Text $env:COMPUTERNAME -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAYAAADE6YVjAAABfUlEQVRIS2NkoANgpIMdDNSwpAfoUAc0x5oC+f+B+AwQm1BsSUhawX9WNjasAfL23WuGXcvmU8UnIBfjBSCfEFSEz4TWKfMZODg4sfvkwweGtpIMsE/+985ZQcgxOA3h5mBnePf6FcO/f38x1HDyCyEsAcm2FoURb9HP9wzVU3czVPXMABtCCMCD69/tZYTUIuQ/32dgMqoGWyIrLsHAwcmFVe+7D+8YilMiIMEFUkGJJZmxAVgtYWVlY/j9+xflltAluG7dusFATD6hKLhGLSGclJGSMHJw/fj6lWH9/KkMkTllYDOQyy6yixVQPkG2ZPmULoYvNTUMPC0tYItQLKGkWEG3BBYM6JaAxJdCJaOR2AzyalpRIPGHt66BKKxFArCojyImCeOMg8LmPnBQ9tcWgSisdQ96fQIKMmxxgm4JoThCsYxsS7DF0bfv3xm+//wJKnVvAF2lCXMZJTUjqG7GBp4BBf3QJLqAfCc86Z7yOp5wpsIRmcRoJEUNAKDb9Afh99TOAAAAAElFTkSuQmCC'
-            $menuItemComputerName.Add_Click({
-                    Set-Clipboard $env:computername
-                    Toast
+            # Throwaway sandbox with a PowerShell window already open in it.
+            $SandboxPowerShell = Add-SubMenuItem -ParentMenuItem $SandboxMenu -Text "PowerShell in Sandbox" -IconBase64 $SandboxIcon
+            $SandboxPowerShell.add_Click({
+                    Start-SandboxSession -Name 'PowerShell' -LogonCommand 'cmd.exe /c start powershell.exe -NoExit -NoLogo'
                 })
+
+            # Throwaway sandbox that browses to whatever web address is on the clipboard,
+            # so an untrusted link never touches the host browser.
+            $SandboxClipboardUrl = Add-SubMenuItem -ParentMenuItem $SandboxMenu -Text "Clipboard Website in Sandbox" -IconBase64 $SandboxIcon
+            $SandboxClipboardUrl.add_Click({
+                    $Uri = Get-ClipboardWebUrl
+                    if (-not $Uri) { return }
+
+                    # A fresh sandbox has no handler registered for http/https, so handing
+                    # the address to the shell only raises "We can't open this 'https' link"
+                    # (a dialog, not an error, so it can't be caught either). Edge has to be
+                    # launched by path with the URL as an argument. The sleep is still needed
+                    # because the sandbox desktop isn't ready the moment the logon command runs.
+                    $Url = $Uri.AbsoluteUri
+                    # Single quotes only inside $Inner — it is itself wrapped in the double
+                    # quotes of -Command, so a nested double quote would end the argument.
+                    $Inner = "Start-Sleep -Seconds 5; " +
+                    "`$Edge = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'; " +
+                    "if (-not (Test-Path `$Edge)) { `$Edge = 'C:\Program Files\Microsoft\Edge\Application\msedge.exe' }; " +
+                    "if (-not (Test-Path `$Edge)) { `$Edge = 'msedge.exe' }; " +
+                    "Start-Process `$Edge -ArgumentList '$Url'"
+                    $Command = "powershell.exe -NoProfile -WindowStyle Hidden -Command ""$Inner"""
+
+                    Start-SandboxSession -Name 'Website' -LogonCommand $Command
+                    Show-TrayNotice -Title 'Windows Sandbox' -Text "Opening $($Uri.Host) in Windows Sandbox." -Icon 'Info'
+                })
+            #endregion
 
             #Separator
             $Separator2 = New-Object System.Windows.Forms.ToolStripSeparator
@@ -2257,6 +2543,7 @@ $Systray_Tool_Icon.Add_Click({
 
             $form.Add_Shown({
                     Set-FormBottomRight -f $form -screen ([System.Windows.Forms.Screen]::PrimaryScreen) -pad $margin
+                    Enable-ToolWindows
                 })
 
             [void]$form.ShowDialog()

@@ -10,7 +10,7 @@ Wizard-Buddy is a PowerShell Windows Forms application that places an animated G
 
 ```powershell
 # Requires PowerShell 7+
-pwsh Start-WizardBuddy-v2.ps1
+pwsh Start-WizardBuddy.ps1
 
 # Or as designed (via VBScript launcher, hidden window):
 # CreateObject("Wscript.Shell").Run "powershell ... irm <url> | iex", 0, False
@@ -20,14 +20,13 @@ pwsh Start-WizardBuddy-v2.ps1
 
 | File | Purpose |
 |------|---------|
-| `Start-WizardBuddy-v3.ps1` | **Active version (v3.1)**. Same app as v2.1 plus the Scripts additions (SimpleHelp Spy Detection), the toggle-based Customize Windows menu and the OpsHub-style Speed Test (see "v3.1 additions") |
-| `Start-WizardBuddy-v2.ps1` | Previous version (v2.1) |
-| `Start-WizardBuddy.ps1` | Older version (v2.0) — uses deprecated `LoadWithPartialName`; kept for reference |
+| `Start-WizardBuddy.ps1` | **Active version (v3.3.0)** — the only script that ships; older builds moved to `Old/` on 2026-09-29 |
+| `Old/Start-WizardBuddy-v2.ps1` | Previous version (v2.1) |
+| `Old/Start-WizardBuddy.ps1` | Older version (v2.0) — uses deprecated `LoadWithPartialName`; kept for reference |
 | `Base Wizard/Get-Wizard.ps1` | Minimal prototype — borderless form with a PictureBox and one GIF, no tray |
-| `ShellContextMenu.ps1` | Standalone PowerShell shell context menu helper (COM-based); v2.1 uses an embedded C# version instead |
-| `Get-Base64.ps1` | Utility — detects file type from Base64 byte signature and saves decoded files |
+| `Old/ShellContextMenu.ps1` | Standalone PowerShell shell context menu helper (COM-based); v2.1 onwards use an embedded C# version instead |
 
-## Architecture (`Start-WizardBuddy-v2.ps1`)
+## Architecture (`Start-WizardBuddy.ps1`)
 
 ### Embedded types
 The script adds two C# types via `Add-Type -TypeDefinition`:
@@ -80,5 +79,22 @@ The helpers are copied from `C:\Projects\Combat-Hounds\Combat-Hounds.ps1`, so a 
 ### v3.2 additions (2026-09-29)
 - The buddy's `PictureBox.MouseDown` handler now multiplexes three gestures: middle-click → `Open-BuddyClipboardUrl`, left double-click (`$e.Clicks -ge 2`) → `Start-BuddyShell`, plain left → the existing `WM_NCLBUTTONDOWN` drag. Double-click is read from the `Clicks` count instead of `Add_DoubleClick` because the drag enters a modal move loop that would otherwise swallow it.
 - `Start-BuddyShell` prefers `$env:ProgramFiles\PowerShell\7\pwsh.exe` and falls back to Windows PowerShell; Shift elevates, and a dismissed UAC prompt (`NativeErrorCode 1223`) is swallowed silently.
-- `Open-BuddyClipboardUrl` reads `Get-Clipboard -Raw`, takes the first non-empty line, prefixes a bare host with `https://`, and only launches `http`/`https` after `[uri]::TryCreate` — so a file path or command on the clipboard is never executed. Failures report through `Show-TrayNotice`.
-- Known pre-existing bug: the buddy's keep-on-top `$timer` is never stopped when the buddy closes, so after Hide it throws on `$form.TopMost` every second (invisible, because the console is hidden).
+- `Get-ClipboardWebUrl` reads `Get-Clipboard -Raw`, takes the first non-empty line, prefixes a bare host with `https://`, and returns a `[uri]` only for `http`/`https` after `[uri]::TryCreate` — so a file path or command on the clipboard is never executed. It reports refusals through `Show-TrayNotice` and is shared by `Open-BuddyClipboardUrl` (host browser) and the Clipboard Website sandbox item.
+- **Windows Sandbox** gained two items: `Start-SandboxSession -Name -LogonCommand` writes a throwaway `.wsb` to `$env:TEMP\WizardBuddy`, XML-escapes the logon command and launches it. "PowerShell in Sandbox" passes `cmd.exe /c start powershell.exe -NoExit -NoLogo`; "Clipboard Website in Sandbox" passes a `powershell.exe -Command` that sleeps 5 seconds (the sandbox shell isn't ready at logon) then launches Edge by path with the URL as an argument. `Test-WindowsSandbox` holds the "install the optional feature?" prompt the two older items still inline.
+- **Password Generator, Scroll Jiggler and SimpleHelp Spy Detection** were rebuilt on `New-OpsHubWindow` (`Show-PasswordGenerator`, `Show-ScrollJiggler`, `Show-SimpleHelpSpyDetection`), so the menu handlers are now one-liners. They follow the Speed Test pattern: build the body XAML, look up elements through `$UI`, report through `Set-UIStatus`. (Since v3.3.0 they open modeless; see below.)
+  - Password Generator: `New-RandomPassword` is now a top-level function (it was defined inside the old `Start-Job`); generating copies to the clipboard. The password field is a read-only `TextBox` with `BorderBrush="Transparent"` — the shared TextBox template hardcodes `BorderThickness="1"`, so setting `BorderThickness="0"` does nothing.
+  - Scroll Jiggler and the spy watcher use `DispatcherTimer`s that are stopped in `Window.Add_Closed`.
+  - The spy watcher still runs as the background job named `SimpHelp`, so it keeps watching after the window closes; the window polls the job and `$env:TEMP\Logix.txt` every 5 seconds (`Update-SpyDetectionUI`).
+
+### v3.2.1 (2026-09-29)
+- "Clipboard Website in Sandbox" no longer hands the URL to the sandbox shell. A fresh sandbox has no http/https handler, so `Start-Process $Url` there only raises the "We can't open this 'https' link" dialog — which is not a terminating error, so the old `try`/`catch` fallback to `msedge.exe` never ran. The logon command now resolves `msedge.exe` itself (`Program Files (x86)` → `Program Files` → bare name) and passes the URL as an argument. Everything inside the `-Command` string is single-quoted, because the string is already wrapped in the double quotes of `-Command`.
+
+### v3.3.0 (2026-09-30)
+- The computer-name item is now the first entry in the buddy menu, followed by a separator.
+- **Tool windows are modeless.** Speed Test, Password Generator, Scroll Jiggler and SimpleHelp Spy Detection open through `Show-ToolWindow` (`Window.Show()`) instead of `ShowDialog()`, so the buddy menu stays usable. Because their handlers now run after the `Show-*` function has returned, they can no longer see its locals by dynamic scoping:
+  - `Show-ToolWindow` stores the `$UI` table in `Window.Tag`; timers keep it in `DispatcherTimer.Tag`. Every handler starts with `$UI = Get-ToolUI $this`. Per-window state (`$UI.Timer`, `$UI.Jiggles`, `$UI.LogPath`) lives in `$UI`, not in function locals. Don't use `.GetNewClosure()` instead: the closure's module scope can't see the script-scope functions when the app is run with `-File`.
+  - `$ToolWindows` (script scope) maps tool name → open window. `Resume-ToolWindow` at the top of each `Show-*` brings an open instance to the front instead of opening a second; the window unregisters itself on `Closed`.
+  - `Show-ToolWindow` calls `ElementHost.EnableModelessKeyboardInterop`, without which a modeless WPF window under the WinForms message loop receives no keystrokes.
+  - The buddy is still shown with `ShowDialog()`, and a WinForms modal loop disables **every** window on the thread (verified), including tool windows opened before the buddy was reopened. The buddy's `Shown` handler calls `Enable-ToolWindows` (`Win32WB.UserWB.EnableWindow`) to undo that.
+- Other UI-thread waits moved off the thread: `Install-Application` waits on the winget window through `Start-BackgroundTask` and launches `-PostInstallPath` in `OnComplete` (only if it exists); the PuTTY application item now calls `Install-Application` (its winget window no longer uses `-NoExit`); Group Policy Update runs `gpupdate` as a background task; Ping Google no longer passes `-Wait`; the Sandbox Proxy clipboard watch is a 1-second WinForms `Timer` that gives up after 10 minutes instead of a busy `while ($true)` loop.
+- **Base64 Wizard is built in.** `Get-Base64.ps1` is gone (it only worked when `$PSScriptRoot` was set, i.e. never via `irm | iex`). `Show-Base64Wizard` is an OpsHub tool window like the others (modeless, `Resume-ToolWindow 'Base64Wizard'`): drop a file on the `DropZone` border or use Choose File to copy its Base64 to the clipboard (`ConvertTo-Base64Clipboard`, refuses folders and files over 50 MB); Decode Clipboard (`Save-Base64Clipboard`) strips an optional `data:...;base64,` prefix and writes `Downloads\Base64-<timestamp>.<ext>`, with the extension from `Get-Base64FileExtension` (leading-byte signatures, `bin` when unrecognised). Fixes carried over from the old script: EXE (`MZ`) was never detected because a 2-byte signature was compared against 4 bytes, and an unknown type silently saved nothing but still reported success.
