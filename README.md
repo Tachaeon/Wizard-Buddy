@@ -8,7 +8,10 @@
 -  **Left-click** → Shows Wizard-Buddy on the desktop.
 
 ![Wizard Left Click](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardLeftClickTray.png)
--  **Right-click** → Opens context menus, Help and Exit.
+-  **Right-click** → Opens context menus, **Help**, **Start with Windows**, **Animate Tray Icon** and Exit.
+- **Help** opens a window that explains every click, scroll and menu.
+- The tray icon shows whichever buddy you picked. Turn on **Animate Tray Icon** (tray right-click) to have it play its animation there too. You'll only see it if the icon is pinned to the taskbar rather than tucked under the ^ arrow.
+- **Start with Windows** (tray right-click) starts Wizard Buddy when you sign in. A check shows it's on; click again to turn it off. It starts the same way you ran it this time: from the script file, or from GitHub if you used the `irm | iex` launcher.
 
 ![Wizard Right Click Tray](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardRightClickTray.png)
 
@@ -16,13 +19,19 @@
 ### 1. Buddies
 ![Buddies Menu](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardRightClickContextMenuBuddies.png)
 
-- Fun companions/mascots you can swap:
+- Fun companions/mascots you can swap. The one you pick is checked, becomes the tray icon and is remembered next time:
 - Bonzi, Carlton, Clippy, Ducky, Dumpster Fire, Linus, Nyan, PBJT, Purple Stud, Snoopy, Toaster, Travolta, Wizard, Yin Yang
 
 ### 2. Applications
 ![Applications Menu](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardRightClickContextMenuApps.png)
 
 - A toolbox of apps and utilities:
+- **Android Emulator** — **Start** your Android virtual device, and pick:
+  - **RAM** (2–16 GB, up to half your PC's memory) and **CPU Cores**
+  - **Screen**: Small Phone (4.65"), Medium Phone (6.4"), Pixel 10 (6.3"), Pixel 10 Pro XL (6.8"), Pixel 10 Pro Fold (8"), Small Tablet (7") or Pixel Tablet (11"). This changes the screen only; a phone set to a tablet size still runs the phone version of Android. For the real tablet experience, use **Add Device › Tablet**.
+  - **Add Device**: create a **Small Phone**, **Tablet** or **Desktop** device (each on the newest Android for its type). Works while another emulator is running.
+
+  The current setting is checked; a change applies the next time the emulator starts. With several devices, each gets its own submenu. Offers the install if it's missing.
 - Command Prompt, PowerShell, PowerShell 7, PowerShell ISE
 - Computer Management, Group Policy Update, Hyper-V Manager, MMC, Network Connections
 - Password Generator, Base64 Wizard, Click Paste, Scroll Jiggler
@@ -38,14 +47,18 @@
 - Remove Task View Button
 - Show Hidden Extensions
 - Per-display Taskbar Buttons
--  **All of the Below** (apply everything)
+- Use Windows Console Host — makes the classic console window (not Windows Terminal) the default for PowerShell, cmd and scripts. Click again to go back to "Let Windows decide".
+-  **All of the Below** (apply everything except Hide Widgets and Use Windows Console Host)
+- Hide Widgets, No Bing in Start Search and Remove Shortcut Arrows need administrator rights. If Wizard Buddy isn't running as admin, it lists what failed and offers to **try again as administrator** (one UAC prompt). The retry still changes *your* settings, even if you sign in to the prompt with a separate admin account.
 
 ### 4. Installs
 ![Installs Menu](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardRightClickContextMenuInstalls.png)
-- Shortcut installers for common tools:
+- Shortcut installers for common tools. Apps that are already installed have a check next to them.
+- **Update All Apps** (at the top) updates everything winget can update, in a window that stays open until you press Enter.
 - 7-Zip, Brave, Firefox, Google Chrome, VLC, Visual Studio Code, WinDirStat
 - Active Directory, RSAT Tools, Group Policy
 - PowerShell 7, PuTTY, Sandbox, Click Paste
+- **Android Emulator** — installs the Android Emulator with Google's Android CLI: always the latest command-line tools, emulator and Android release (Google Play image), with a ready-to-run phone. No Android Studio, no Java and no admin rights needed; about 2 GB is downloaded. Run it again to update the tools (close the emulator first). When it finishes it offers to start the emulator.
 
 ### 5. Scripts
 ![Scripts Menu](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardRightClickContextMenuScripts.png)
@@ -65,6 +78,8 @@
 - Hides Wizard-Buddy from the desktop while keeping tray controls available.
 
 ## Other Features
+- **Computer name** (top of the buddy menu): click it to copy the computer name, or hover over it for more. Click any row to copy it: **IP Address, User, Serial Number, Model, OS, Joined To** (Entra / hybrid / domain / workgroup) and **Uptime**. **Copy All** copies every row at once.
+- **Wizard Buddy remembers** your buddy, its size, its opacity and where you left it. If that spot is no longer on a screen (say, a monitor was unplugged), it goes back to the bottom-right corner. A .gif you dropped on it isn't remembered.
 - **Base64 Wizard** is built in (no extra script): drop a file on it, or choose one, to copy its Base64 to the clipboard; or copy Base64 text and click **Decode Clipboard** to save the file to Downloads with the right extension.
 - Speed Test, Password Generator, Scroll Jiggler, SimpleHelp Spy Detection and Base64 Wizard all share the same dark, rounded OpsHub-style window. They open alongside the buddy instead of blocking it, so you can keep using the menu while one is open; picking one that is already open brings it to the front.
 - Installs, Group Policy Update, Ping Google and the Sandbox Proxy no longer freeze the menu while they run.
