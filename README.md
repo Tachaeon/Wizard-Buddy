@@ -56,7 +56,7 @@
 - Shortcut installers for common tools. Apps that are already installed have a check next to them.
 - **Update All Apps** (at the top) updates everything winget can update, in a window that stays open until you press Enter.
 - 7-Zip, Brave, Firefox, Google Chrome, VLC, Visual Studio Code, WinDirStat
-- Active Directory, RSAT Tools, Group Policy
+- Active Directory, RSAT Tools, Group Policy — install in an administrator console (one UAC prompt) while the buddy stays usable; you're told when they finish
 - PowerShell 7, PuTTY, Sandbox, Click Paste
 - **Android Emulator** — installs the Android Emulator with Google's Android CLI: always the latest command-line tools, emulator and Android release (Google Play image), with a ready-to-run phone. No Android Studio, no Java and no admin rights needed; about 2 GB is downloaded. Run it again to update the tools (close the emulator first). When it finishes it offers to start the emulator.
 

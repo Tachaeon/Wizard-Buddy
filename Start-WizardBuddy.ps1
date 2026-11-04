@@ -2,7 +2,7 @@
 CreateObject("Wscript.Shell").Run "powershell -NoProfile -ExecutionPolicy Bypass -Command ""irm https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/main/Start-WizardBuddy.ps1 | iex""", 0, False
 #>
 
-#Version = "3.7.0"
+#Version = "3.7.1"
 
 <#
 === Wizard Buddy v2 - Features ===
@@ -115,6 +115,9 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName WindowsFormsIntegration
 
+# All P/Invoke types in one compile: Windows PowerShell runs csc.exe for every Add-Type, about
+# 0.2 s each. Skipped when this session already has them (the script was re-run).
+if (-not ('Win32WB.ConsoleWB' -as [type])) {
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -249,11 +252,6 @@ public static class ShellContextMenu
         }
     }
 }
-'@ -ReferencedAssemblies System.Drawing
-
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
 
 public class User32 {
     [DllImport("user32.dll")]
@@ -262,108 +260,103 @@ public class User32 {
     [DllImport("user32.dll")]
     public static extern IntPtr SendMessage(IntPtr hWnd, int Msg, int wParam, int lParam);
 }
-"@
+
+namespace Win32WB
+{
+    // DWM rounded corners for OpsHub-style borderless windows.
+    public static class DwmApiWB
+    {
+        [DllImport("dwmapi.dll")]
+        public static extern int DwmSetWindowAttribute(IntPtr hwnd, uint attr, ref int pvAttr, uint cbAttr);
+    }
+
+    // Re-enables tool windows that the buddy's modal loop disabled.
+    public static class UserWB
+    {
+        [DllImport("user32.dll")]
+        public static extern bool EnableWindow(IntPtr hWnd, bool bEnable);
+    }
+
+    // Re-asserts the buddy's topmost z-order; Form.TopMost can't, because its setter ignores an unchanged value.
+    public static class TopMostWB
+    {
+        [DllImport("user32.dll")]
+        public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+    }
+
+    // Frees the tray icon handles made by Bitmap.GetHicon.
+    public static class IconWB
+    {
+        [DllImport("user32.dll")]
+        public static extern bool DestroyIcon(IntPtr hIcon);
+    }
+
+    // Hides the PowerShell console window at startup.
+    public static class ConsoleWB
+    {
+        [DllImport("user32.dll")]
+        public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+    }
+}
+'@
+}
 
 #region Functions
 $margin = 12
 
+# Toast for the computer-name click. The hero GIF is downloaded once (kept in %TEMP%\WizardBuddy)
+# and the app ID is registered once per session, so a click doesn't wait on the network.
 function Toast {
-    $Header_type = "GIF"
-    $URL = "https://media.tenor.com/BXQgJskV7LgAAAAj/9999.gif"
-
-    # Toast information
-    $Title = "$ENV:COMPUTERNAME "
-    $Message = "Your computer name has been added to the clipboard for pasting."
-    $Advice = "-Wizard Buddy"
-    $Text_AppName = "Wizard Buddy"
-
-    If ($Header_type -eq "GIF") {
-        $HeroImage = "$env:temp\reboot.gif"		
-        Invoke-WebRequest -Uri $URL -OutFile $HeroImage -UseBasicParsing
-    }
-
-    Function Set_Action {
-        param(
-            $Action_Name
-        )	
-        $Main_Reg_Path = "HKCU:\SOFTWARE\Classes\$Action_Name"
-        $Command_Path = "$Main_Reg_Path\shell\open\command"
-        $CMD_Script = "C:\Windows\Temp\$Action_Name.cmd"
-        New-Item $Command_Path -Force
-        New-ItemProperty -Path $Main_Reg_Path -Name "URL Protocol" -Value "" -PropertyType String -Force | Out-Null
-        Set-ItemProperty -Path $Main_Reg_Path -Name "(Default)" -Value "URL:$Action_Name Protocol" -Force | Out-Null
-        Set-ItemProperty -Path $Command_Path -Name "(Default)" -Value $CMD_Script -Force | Out-Null
-    }
-
-    Function Register-NotificationApp($AppID, $AppDisplayName) {
-        [int]$ShowInSettings = 0
-        [int]$IconBackgroundColor = 0
-        $IconUri = "C:\Windows\ImmersiveControlPanel\images\logo.png"
-        $AppRegPath = "HKCU:\Software\Classes\AppUserModelId"
-        $RegPath = "$AppRegPath\$AppID"
-        $Notifications_Reg = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Notifications\Settings'
-        If (!(Test-Path -Path "$Notifications_Reg\$AppID")) {
-            New-Item -Path "$Notifications_Reg\$AppID" -Force
-            New-ItemProperty -Path "$Notifications_Reg\$AppID" -Name 'ShowInActionCenter' -Value 1 -PropertyType 'DWORD' -Force
-        }
-        If ((Get-ItemProperty -Path "$Notifications_Reg\$AppID" -Name 'ShowInActionCenter' -ErrorAction SilentlyContinue).ShowInActionCenter -ne '1') {
-            New-ItemProperty -Path "$Notifications_Reg\$AppID" -Name 'ShowInActionCenter' -Value 1 -PropertyType 'DWORD' -Force
-        }
+    $AppID = 'Wizard Buddy'
+    $HeroImage = Join-Path $env:TEMP 'WizardBuddy\ToastHero.gif'
+    if (-not (Test-Path -LiteralPath $HeroImage)) {
         try {
-            if (-NOT(Test-Path $RegPath)) {
-                New-Item -Path $AppRegPath -Name $AppID -Force | Out-Null
-            }
-            $DisplayName = Get-ItemProperty -Path $RegPath -Name DisplayName -ErrorAction SilentlyContinue | Select-Object -ExpandProperty DisplayName -ErrorAction SilentlyContinue
-            if ($DisplayName -ne $AppDisplayName) {
-                New-ItemProperty -Path $RegPath -Name DisplayName -Value $AppDisplayName -PropertyType String -Force | Out-Null
-            }
-            $ShowInSettingsValue = Get-ItemProperty -Path $RegPath -Name ShowInSettings -ErrorAction SilentlyContinue | Select-Object -ExpandProperty ShowInSettings -ErrorAction SilentlyContinue
-            if ($ShowInSettingsValue -ne $ShowInSettings) {
-                New-ItemProperty -Path $RegPath -Name ShowInSettings -Value $ShowInSettings -PropertyType DWORD -Force | Out-Null
-            }
-            New-ItemProperty -Path $RegPath -Name IconUri -Value $IconUri -PropertyType ExpandString -Force | Out-Null	
-            New-ItemProperty -Path $RegPath -Name IconBackgroundColor -Value $IconBackgroundColor -PropertyType ExpandString -Force | Out-Null
+            New-Item -Path (Split-Path $HeroImage) -ItemType Directory -Force | Out-Null
+            $ProgressPreference = 'SilentlyContinue'
+            Invoke-WebRequest -Uri 'https://media.tenor.com/BXQgJskV7LgAAAAj/9999.gif' -OutFile $HeroImage -UseBasicParsing -TimeoutSec 5
         }
-        catch {
-        }
+        catch { Remove-Item -LiteralPath $HeroImage -Force -ErrorAction SilentlyContinue }  # Offline: no picture this time.
     }
 
-    $Scenario = 'reminder'
-    [xml]$Toast = @"
-<toast scenario="$Scenario">
+    if (-not $script:ToastAppRegistered) {
+        try {
+            $Notifications = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Notifications\Settings\$AppID"
+            if (-not (Test-Path -LiteralPath $Notifications)) { New-Item -Path $Notifications -Force | Out-Null }
+            New-ItemProperty -LiteralPath $Notifications -Name 'ShowInActionCenter' -Value 1 -PropertyType DWord -Force | Out-Null
+
+            $AppKey = "HKCU:\Software\Classes\AppUserModelId\$AppID"
+            if (-not (Test-Path -LiteralPath $AppKey)) { New-Item -Path $AppKey -Force | Out-Null }
+            New-ItemProperty -LiteralPath $AppKey -Name DisplayName -Value $AppID -PropertyType String -Force | Out-Null
+            New-ItemProperty -LiteralPath $AppKey -Name ShowInSettings -Value 0 -PropertyType DWord -Force | Out-Null
+            New-ItemProperty -LiteralPath $AppKey -Name IconUri -Value 'C:\Windows\ImmersiveControlPanel\images\logo.png' -PropertyType ExpandString -Force | Out-Null
+            New-ItemProperty -LiteralPath $AppKey -Name IconBackgroundColor -Value 0 -PropertyType ExpandString -Force | Out-Null
+            $script:ToastAppRegistered = $true
+        }
+        catch { }
+    }
+
+    $Hero = if (Test-Path -LiteralPath $HeroImage) { "<image placement=""hero"" src=""$([System.Security.SecurityElement]::Escape($HeroImage))"" hint-crop=""circle""/>" }
+    $Toast = @"
+<toast scenario="reminder">
     <visual>
-    <binding template="ToastGeneric">
-        <image placement="hero" src="$HeroImage" hint-crop="circle"/>
-        <text placement="attribution">$Attribution</text>
-        <text>$Title</text>
-        <group>
-            <subgroup>
-                <text hint-style="body" hint-wrap="true" >$Message</text>
-            </subgroup>
-        </group>
-		
-		<group>
-			<subgroup>
-				<text hint-style="body" hint-wrap="true" >$Advice</text>
-			</subgroup>
-		</group>
-    </binding>
+        <binding template="ToastGeneric">
+            $Hero
+            <text>$([System.Security.SecurityElement]::Escape($env:COMPUTERNAME))</text>
+            <group><subgroup><text hint-style="body" hint-wrap="true">Your computer name has been added to the clipboard for pasting.</text></subgroup></group>
+            <group><subgroup><text hint-style="body" hint-wrap="true">-Wizard Buddy</text></subgroup></group>
+        </binding>
     </visual>
-	$Actions
 </toast>
 "@
-
-    $AppID = $Text_AppName
-    $AppDisplayName = $Text_AppName
-    Register-NotificationApp -AppID $Text_AppName -AppDisplayName $Text_AppName
-
-    # Toast creation and display
-    $null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
-    $null = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
-    $ToastXml = New-Object -TypeName Windows.Data.Xml.Dom.XmlDocument
-    $ToastXml.LoadXml($Toast.OuterXml)
-    # Display the Toast
-    [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($AppID).Show($ToastXml)
+    # PowerShell 7 can't load WinRT types this way, so it gets a tray balloon instead.
+    try {
+        $null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+        $null = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
+        $ToastXml = New-Object -TypeName Windows.Data.Xml.Dom.XmlDocument
+        $ToastXml.LoadXml($Toast)
+        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($AppID).Show($ToastXml)
+    }
+    catch { Show-TrayNotice $env:COMPUTERNAME 'Your computer name has been added to the clipboard for pasting.' }
 }
 
 function Set-FormBottomRight([System.Windows.Forms.Form]$f, [System.Windows.Forms.Screen]$screen, [int]$pad) {
@@ -411,19 +404,14 @@ function Install-Application {
         })
 }
 
+# Installs winget (App Installer) when it is missing; C:\Install only holds the download.
 function WingetCheck {
-    $Filename = "C:\Install"
-    If (!(Test-Path -Path $FileName)) {
-        New-Item -Path "C:\" -Name "Install" -ItemType "directory"
-    }
-    $FileName = "$env:LOCALAPPDATA\Microsoft\WindowsApps\Winget.exe"
-    If (!(Test-Path -Path $FileName)) {
-        $ProgressPreference = 'SilentlyContinue'
-        $URL = "https://github.com/microsoft/winget-cli/releases/download/v1.4.10173/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle"
-        $Path = "C:\Install\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle"
-        Invoke-WebRequest -Uri $URL -OutFile $Path
-        Add-AppxPackage "C:\Install\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle"   
-    }
+    if ((Get-Command winget.exe -ErrorAction SilentlyContinue) -or (Test-Path -LiteralPath "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe")) { return }
+    $ProgressPreference = 'SilentlyContinue'
+    New-Item -Path 'C:\Install' -ItemType Directory -Force | Out-Null
+    $Path = 'C:\Install\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle'
+    Invoke-WebRequest -Uri 'https://github.com/microsoft/winget-cli/releases/download/v1.4.10173/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle' -OutFile $Path -UseBasicParsing
+    Add-AppxPackage $Path
 }
 
 function Get-IconFromBase64 {
@@ -435,6 +423,30 @@ function Get-IconFromBase64 {
     return [System.Drawing.Image]::FromStream($memoryStream)
 }
 
+# Menu icons are decoded (or extracted from a file) once and shared. The buddy menu is rebuilt
+# every time the buddy is shown, and disposing a menu leaves its items' images alone. Keyed by the
+# Base64 text, or "file:<path>" for an icon taken from a file.
+$MenuImageCache = [System.Collections.Generic.Dictionary[string, System.Drawing.Image]]::new()
+
+function Get-MenuImage {
+    param (
+        [string]$Base64String,
+        [string]$FilePath
+    )
+    $Key = if ($Base64String) { $Base64String } else { "file:$FilePath" }
+    $Image = $null
+    if (-not $MenuImageCache.TryGetValue($Key, [ref]$Image)) {
+        if ($Base64String) { $Image = Get-IconFromBase64 $Base64String }
+        else {
+            $Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($FilePath)
+            $Image = $Icon.ToBitmap()
+            $Icon.Dispose()
+        }
+        $MenuImageCache[$Key] = $Image
+    }
+    return $Image
+}
+
 # Function to add a menu item with an icon
 function Add-MenuItem {
     param (
@@ -443,7 +455,7 @@ function Add-MenuItem {
         [string]$IconBase64
     )
     $MenuItem = $Menu.Items.Add($Text)
-    $MenuItem.Image = Get-IconFromBase64 -Base64String $IconBase64
+    $MenuItem.Image = Get-MenuImage -Base64String $IconBase64
     return $MenuItem
 }
 
@@ -460,61 +472,27 @@ function Add-SubMenuItem {
         throw "ParentMenuItem cannot be null."
     }
 
+    if ($AddSeparator) {
+        [void]$ParentMenuItem.DropDownItems.Add([System.Windows.Forms.ToolStripSeparator]::new())
+    }
+
+    $SubMenuItem = [System.Windows.Forms.ToolStripMenuItem]::new($Text)
+
+    # Icon from Base64, else from the file; a missing icon isn't worth failing the menu over.
     try {
-        # Add separator if the switch is used
-        if ($AddSeparator) {
-            $Separator = New-Object System.Windows.Forms.ToolStripSeparator
-            $ParentMenuItem.DropDownItems.Add($Separator) | Out-Null
-        }
-
-        # Create submenu item
-        $SubMenuItem = [System.Windows.Forms.ToolStripMenuItem]::new()
-        $SubMenuItem.Text = $Text
-
-        # Handle Icon from Base64 if provided
-        if ($IconBase64) {
-            try {
-                $Image = Get-IconFromBase64 -Base64String $IconBase64
-                if ($Image) {
-                    $SubMenuItem.Image = $Image
-                }
-                else {
-                    Write-Warning "Failed to decode Base64 image."
-                }
-            }
-            catch {
-                Write-Warning "Error decoding Base64 image: $_"
-            }
-        }
-        # Handle Icon from FilePath
-        elseif ($FilePath -and (Test-Path $FilePath)) {
-            try {
-                $Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($FilePath)
-                if ($Icon) {
-                    $SubMenuItem.Image = $Icon.ToBitmap()
-                }
-                else {
-                    Write-Warning "No icon extracted from file: $FilePath"
-                }
-            }
-            catch {
-                Write-Warning "Failed to extract icon from file: $_"
-            }
-        }
-
-        # Store file path in Tag and add right-click shell context menu handler
-        if ($FilePath) {
-            $SubMenuItem.Tag = $FilePath
-            Add-ShellContextMenuHandler -MenuItem $SubMenuItem
-        }
-
-        # Add submenu item to parent menu
-        $ParentMenuItem.DropDownItems.Add($SubMenuItem) | Out-Null
-        return $SubMenuItem
+        if ($IconBase64) { $SubMenuItem.Image = Get-MenuImage -Base64String $IconBase64 }
+        elseif ($FilePath -and (Test-Path -LiteralPath $FilePath)) { $SubMenuItem.Image = Get-MenuImage -FilePath $FilePath }
     }
-    catch {
-        throw "Error adding submenu item: $_"
+    catch { Write-Warning "No icon for ${Text}: $_" }
+
+    # Store file path in Tag and add right-click shell context menu handler
+    if ($FilePath) {
+        $SubMenuItem.Tag = $FilePath
+        Add-ShellContextMenuHandler -MenuItem $SubMenuItem
     }
+
+    [void]$ParentMenuItem.DropDownItems.Add($SubMenuItem)
+    return $SubMenuItem
 }
 
 function Add-ShellContextMenuHandler {
@@ -573,54 +551,33 @@ function ClickPaste {
     }
 }
 
-# Function to download image from a URL (supports GIFs)
+# Downloads an image (GIFs included) from a URL; $null with a message box when that fails.
 function Get-ImageFromURL {
     param (
         [string]$url
     )
+    $webClient = New-Object System.Net.WebClient
     try {
-        # Use WebClient to download the image as a byte array
-        $webClient = New-Object System.Net.WebClient
         $imageBytes = $webClient.DownloadData($url)
-
-        # Create a memory stream to hold the image bytes
-        $memoryStream = New-Object System.IO.MemoryStream(, $imageBytes)
-
-        # Load the image from the memory stream
-        $image = [System.Drawing.Image]::FromStream($memoryStream)
-
-        # Return the image
-        return $image
+        return [System.Drawing.Image]::FromStream([System.IO.MemoryStream]::new($imageBytes))
     }
     catch {
-        # Show a message box if the URL cannot be fetched or loaded
-        [System.Windows.Forms.MessageBox]::Show("Failed to load the image from the URL.", "Invalid URL", 
-            [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        [System.Windows.Forms.MessageBox]::Show("Failed to load the image from the URL.", "Invalid URL",
+            [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
         return $null
     }
+    finally { $webClient.Dispose() }
 }
 
-# Function to handle GIFs specifically
-function Import-GifFromURL {
+# Swaps the buddy's picture and frees the old one (every buddy image is decoded on its own).
+function Set-BuddyPicture {
     param (
-        [string]$url
+        [System.Windows.Forms.PictureBox]$PictureBox,
+        [System.Drawing.Image]$Image
     )
-    try {
-        # Download the image using WebClient
-        $webClient = New-Object System.Net.WebClient
-        $imageBytes = $webClient.DownloadData($url)
-
-        # Create a memory stream and pass the image bytes to the PictureBox directly
-        $memoryStream = New-Object System.IO.MemoryStream(, $imageBytes)
-
-        # Set the PictureBox Image property directly for GIF handling
-        $pictureBox.Image = [System.Drawing.Image]::FromStream($memoryStream)
-    }
-    catch {
-        # Show a message box if there is an issue
-        [System.Windows.Forms.MessageBox]::Show("Failed to load the GIF from the URL.", "Invalid GIF URL",
-            [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-    }
+    $Old = $PictureBox.Image
+    $PictureBox.Image = $Image
+    if ($Old -and -not [object]::ReferenceEquals($Old, $Image)) { $Old.Dispose() }
 }
 
 # Apply (or with -Undo, revert) one registry setting; throws on failure. A setting is
@@ -1232,23 +1189,25 @@ function Get-AndroidAvdConfigPath {
     $Folder = Join-Path $AvdHome "$Name.avd"
     $Ini = Join-Path $AvdHome "$Name.ini"
     if (Test-Path -LiteralPath $Ini) {
-        $PathLine = (Get-Content -LiteralPath $Ini) -match '^path=' | Select-Object -First 1
+        $PathLine = @(Get-Content -LiteralPath $Ini) -match '^path=' | Select-Object -First 1
         if ($PathLine) { $Folder = $PathLine.Substring(5).Trim() }
     }
     return Join-Path $Folder 'config.ini'
 }
 
-# Reads one key from a device's config.ini; $null when it's missing.
-function Get-AndroidDeviceSetting {
-    param (
-        [Parameter(Mandatory)][string]$Name,
-        [Parameter(Mandatory)][string]$Key
-    )
+# A device's config.ini as a hashtable of key = value (first one wins); empty when it's missing.
+function Get-AndroidDeviceConfig {
+    param ([Parameter(Mandatory)][string]$Name)
+    $Settings = @{}
     $Config = Get-AndroidAvdConfigPath -Name $Name
-    if (-not (Test-Path -LiteralPath $Config)) { return $null }
-    $Line = (Get-Content -LiteralPath $Config) -match "^$([regex]::Escape($Key))=" | Select-Object -First 1
-    if ($Line) { return $Line.Substring($Key.Length + 1).Trim() }
-    return $null
+    if (-not (Test-Path -LiteralPath $Config)) { return $Settings }
+    foreach ($Line in [System.IO.File]::ReadAllLines($Config)) {
+        $Equals = $Line.IndexOf('=')
+        if ($Equals -lt 1) { continue }
+        $Key = $Line.Substring(0, $Equals)
+        if (-not $Settings.ContainsKey($Key)) { $Settings[$Key] = $Line.Substring($Equals + 1).Trim() }
+    }
+    return $Settings
 }
 
 # Writes one key into a device's config.ini (replacing it, or appending it when missing).
@@ -1305,7 +1264,8 @@ function Add-AndroidDeviceMenuItems {
 
     # Looked up once: the menu is rebuilt every time the buddy is shown.
     if (-not $script:HostMemoryMB) { $script:HostMemoryMB = [int]((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1MB) }
-    $CurrentRam = Get-AndroidDeviceSetting -Name $Name -Key 'hw.ramSize'
+    $DeviceConfig = Get-AndroidDeviceConfig -Name $Name
+    $CurrentRam = $DeviceConfig['hw.ramSize']
     # hw.ramSize is MB, but may carry a unit ("2048M", "4G").
     $CurrentMB = if ($CurrentRam -match '^(\d+)\s*([MG]?)') { [int]$Matches[1] * $(if ($Matches[2] -eq 'G') { 1024 } else { 1 }) }
     $RamChoices = @(2048, 3072, 4096, 6144, 8192, 12288, 16384 | Where-Object { $_ -le $script:HostMemoryMB / 2 }) + @($CurrentMB | Where-Object { $_ }) | Sort-Object -Unique
@@ -1317,7 +1277,7 @@ function Add-AndroidDeviceMenuItems {
         $Item.Tag = @{ Name = $Name; Settings = @{ 'hw.ramSize' = "$MB" }; Label = "$($Item.Text) of RAM"; Menu = $RamMenu; Prefix = 'RAM' }
     }
 
-    $CurrentCores = Get-AndroidDeviceSetting -Name $Name -Key 'hw.cpu.ncore'
+    $CurrentCores = $DeviceConfig['hw.cpu.ncore']
     $CoreChoices = @(1, 2, 4, 6, 8, 12, 16 | Where-Object { $_ -le [Environment]::ProcessorCount }) + @($CurrentCores | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ }) | Sort-Object -Unique
     $CpuMenu = Add-SubMenuItem -ParentMenuItem $Parent -Text "CPU Cores ($(if ($CurrentCores) { $CurrentCores } else { 'default' }))"
     foreach ($Cores in $CoreChoices) {
@@ -1327,8 +1287,8 @@ function Add-AndroidDeviceMenuItems {
     }
 
     # Screen: resolution + density. A wide (landscape-native) panel starts in landscape.
-    $CurrentWidth = Get-AndroidDeviceSetting -Name $Name -Key 'hw.lcd.width'
-    $CurrentHeight = Get-AndroidDeviceSetting -Name $Name -Key 'hw.lcd.height'
+    $CurrentWidth = $DeviceConfig['hw.lcd.width']
+    $CurrentHeight = $DeviceConfig['hw.lcd.height']
     $CurrentPreset = $AndroidScreenPresets | Where-Object { "$($_.Width)" -eq $CurrentWidth -and "$($_.Height)" -eq $CurrentHeight } | Select-Object -First 1
     $ScreenLabel = if ($CurrentPreset) { $CurrentPreset.Text } elseif ($CurrentWidth) { "${CurrentWidth}x$CurrentHeight" } else { 'default' }
     $ScreenMenu = Add-SubMenuItem -ParentMenuItem $Parent -Text "Screen ($ScreenLabel)"
@@ -1515,15 +1475,6 @@ function Start-BackgroundTask {
     return $true
 }
 #endregion Background tasks
-
-# DWM rounded corners for OpsHub-style borderless windows.
-$wbDwmSig = '[DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hwnd, uint attr, ref int pvAttr, uint cbAttr);'
-try { [void](Add-Type -MemberDefinition $wbDwmSig -Name DwmApiWB -Namespace Win32WB -PassThru) } catch { }
-$wbUserSig = '[DllImport("user32.dll")] public static extern bool EnableWindow(IntPtr hWnd, bool bEnable);'
-try { [void](Add-Type -MemberDefinition $wbUserSig -Name UserWB -Namespace Win32WB -PassThru) } catch { }
-# Re-asserts the buddy's topmost z-order; Form.TopMost can't, because its setter ignores an unchanged value.
-$wbTopMostSig = '[DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);'
-try { [void](Add-Type -MemberDefinition $wbTopMostSig -Name TopMostWB -Namespace Win32WB -PassThru) } catch { }
 
 # Builds a borderless OpsHub-style window around $BodyXaml: Tokyo Night palette, badge + title
 # bar with minimize/close, drag to move, DWM rounded corners. $BodyXaml can use the palette
@@ -1914,17 +1865,25 @@ function Show-SpeedTest {
 #endregion Speed Test
 
 #region Password Generator
+# Letters, digits and ! @ # % ^ & *, drawn from the cryptographic RNG.
 function New-RandomPassword {
     param (
         [Parameter(Mandatory = $true)]
         [ValidateRange(1, 512)]
         [int]$PasswordLength
     )
-    $ValidCharacters = 48..57 + 65..90 + 97..122 + (
-        '!', '@', '#', '%', '^', '&', '*'
-    ) | ForEach-Object { [char]$_ }
-
-    return (1..$PasswordLength | ForEach-Object { Get-Random $ValidCharacters }) -join ''
+    $ValidCharacters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!@#%^&*'
+    $Rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $Bytes = [byte[]]::new(4 * $PasswordLength)
+        $Rng.GetBytes($Bytes)
+        $Password = [char[]]::new($PasswordLength)
+        for ($i = 0; $i -lt $PasswordLength; $i++) {
+            $Password[$i] = $ValidCharacters[[BitConverter]::ToUInt32($Bytes, 4 * $i) % $ValidCharacters.Length]
+        }
+        return -join $Password
+    }
+    finally { $Rng.Dispose() }
 }
 
 # OpsHub-style Password Generator. Generating copies the password to the clipboard.
@@ -2465,9 +2424,6 @@ function Get-SavedBuddyName {
     return 'Wizard'
 }
 
-$wbIconSig = '[DllImport("user32.dll")] public static extern bool DestroyIcon(IntPtr hIcon);'
-try { [void](Add-Type -MemberDefinition $wbIconSig -Name IconWB -Namespace Win32WB -PassThru) } catch { }
-
 # Draws the GIF's active frame into a 64x64 square (aspect kept, so tall or wide buddies
 # aren't stretched) and returns an HICON. The caller destroys it with DestroyIcon.
 function New-TrayIconHandle {
@@ -2627,6 +2583,41 @@ function Update-InstallCheckMarks {
     }
 }
 
+# Adds Windows capabilities (RSAT) in an elevated console that stays open so DISM's output can be
+# read; it is waited on in the background, so the buddy isn't frozen for the minutes it takes.
+# $InstalledPath (optional) is checked afterwards to tell success from failure.
+function Install-WindowsCapability {
+    param (
+        [string]$Title,
+        [string]$Name,
+        [string]$InstalledPath
+    )
+    $Command = "Get-WindowsCapability -Online -Name '$Name' | Where-Object State -ne 'Installed' | Add-WindowsCapability -Online; Read-Host 'Finished. Press Enter to close'"
+    try {
+        $Process = Start-Process -FilePath 'powershell.exe' -Verb RunAs -PassThru -ErrorAction Stop -ArgumentList '-NoProfile', '-Command', $Command
+    }
+    catch {
+        # 1223 = the user dismissed the UAC prompt; nothing to report.
+        if ($_.Exception.NativeErrorCode -ne 1223 -and $_.Exception.InnerException.NativeErrorCode -ne 1223) {
+            Show-TrayNotice $Title "Could not start an elevated PowerShell: $($_.Exception.Message)" Error
+        }
+        return
+    }
+    [void](Start-BackgroundTask -Name "Install $Title" -ArgumentList $Process -Context @{ Title = $Title; InstalledPath = $InstalledPath } -ScriptBlock {
+            param($Process)
+            $Process.WaitForExit()
+        } -OnComplete {
+            param($Task)
+            $Title = $Task.Context.Title
+            if ($Task.Error) { Show-TrayNotice $Title $Task.Error Error; return }
+            $Path = $Task.Context.InstalledPath
+            if ($Path -and -not (Test-Path -LiteralPath $Path)) {
+                Show-TrayNotice $Title "$Title is not installed - see the console output for why." Warning
+            }
+            else { Show-TrayNotice 'Installation Complete' "$Title has been installed." }
+        })
+}
+
 function Update-AllApps {
     WingetCheck
     $Command = "winget upgrade --all -h --accept-package-agreements --accept-source-agreements; Read-Host 'Finished. Press Enter to close'"
@@ -2744,6 +2735,7 @@ function Get-BuddyComputerInfo {
 function Update-ComputerInfoMenu {
     param ([System.Windows.Forms.ToolStripMenuItem]$MenuItem)
     $Info = Get-BuddyComputerInfo
+    foreach ($Old in @($MenuItem.DropDownItems)) { $Old.Dispose() }
     $MenuItem.DropDownItems.Clear()
     foreach ($Label in $Info.Keys) {
         if ($Label -eq 'Computer Name') { continue }
@@ -2768,9 +2760,6 @@ function Copy-ComputerInfo {
 }
 #endregion Computer info
 
-function Restart-Explorer {
-    Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
-}
 #endregion
 
 $DogIcon = 'iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAEG0lEQVRoQ9WZTWgTQRTH5yVpI21B8AOttKBSQRRqYgTRg+i19GqhNC14KnjWU0EEsQfBowe92UTBeBTrTQ8eRAptEKQHLQpGK0Kh4EfZtpvx7SYbdzfzPVutc0qyM+/9fzNv3rydANmiRks5CuNVCJtn/WbrPuLA1lgw3hPqfQ4D0LuFLtLl/oz/buszcYBAfBvAzGA3gdSPpuBfCNdtK973kYSRSJjMDmRh6L1DKQEA4q9EvCHkTQSYSsJ34gBJiNKxkRgALRcuE+reSTrGZTCJAITjPnAYz0CtDV7OfcfA6vG/L1XTcJ3UZSJFz60BWOJ5ELSc+4ri98UF8WBVwKwAROJZoaQDqyLeOgslCYA5ax6KCwVV4a1V1h3QiuVS7ht+3iuMz9BJTB8WjhLXXVTtr6rLOIRksx8PIVrOfyGU9oqFpaZhfF7rfFAGoDP5UwToXLDhtAGa5YVsZnU3tDpArL7BjFLHjCIcH6mF/iUAq77B4qwDi7N11ZhGG7ew79V/sgK8MlgYRlgHQbGaCguWhh1jjBRY1kH03CvYiBdKjMaKZRmAyfuD0h6g5dN9hDqffJ3ZIxkYeey20mmlsJM47mqEIbuRhZG3beGF++YJ7pth3qSwAFgHYni8FIAzazV01m+yerxV4Im3AsAZc3DGOplCUx15GJurGkJ4q9nnjwV4iSfwOZYd+qhwgay7z0WpVbgCujFrAmM7hgtAKxfTxHm3KXOge/AIk0LbWQGLML5wTJiqeQ9pKb9MCN0vA8Dn9xBiUqEftwstD2KSSDWSRHtbR/tZ7sbnA+Q28FlGRZjtKtiEKj+EyrkPuIEPqgBgn2WEOKDYN9JNJr6x0ckrPBTPsuxbbeKwQZNVQPEO2mBnuZhanv1EAEzEe/qUZr8JsoUAsISZYkA3fDBJnEAE1XNkDQG6tENIYZbqaDgdNkwrZ3YRZ20l5qytn4LtPyZ29+6AoWdeuLU1aSkhcqRbsLWVCy/OZ0ht1ct2wmZ8EkdmNnbI6Ir3bdF6D0y88S94g0Yf5CdInd4XESQCIJsl1ZDggHslOTMaZAlCKYQUxc9jv7ysL/fGjvXKCXAbC70rwtWROVR9rpwSY+8Tcfu0dHKSZNKzMDrHKy0iQxJZAWXxTdeysFCdNK+fNYCu+IY4WMGzY4+OUF5fKwAz8YGU1BReYk3bQhgBoHDvesS7JrFrGTIMo9WnNka0AexmnSEVsv1QfF0zhdACQPEldFQ0dcaN49jfsTr2dQGYf9rpOEwaYtsAkE1yCC5VP+pOxvYBSMENGFu49t8CmB5ueitQOd5JnA5mXa47c/H+fwXAc6ryv4ABzGcEaNzUaTatFQhsYzrllr+a/v3uprPvjzVxGAKJplUgNbz+YF764sot4TXN4bA/G+GBnd/2jblAobJvMgAAAABJRU5ErkJggg=='
@@ -2850,7 +2839,7 @@ $Menu_AnimateTray.add_Click({
 
 #Separator
 $Separator3 = New-Object System.Windows.Forms.ToolStripSeparator
-$contextmenu.Items.Add($Separator3)
+[void]$contextmenu.Items.Add($Separator3)
 
 $Menu_Exit = $contextmenu.Items.Add("Exit")
 $ExitIconBase64 = 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAApklEQVRIS2NkQAPGxsb/0cVI4Z89e5YRWT0Kh1LDYQYjW4LVAnRXEOsDmANHLcAZYlQPIpCB6PGFLkZRJMNc/PHjR447d+78xOY1qlgANfg30Dds6JYQZQEp+YOojIasiBTDycpo5FgAsgjmSIJBNCgtILmoIMUXJEcyvoIOzWLykykuS+iS0WhaVOCqDUmO5NEKBx4CpKR3fMGGMw5Amii1BD1VAQBT08IZ4lLZJwAAAABJRU5ErkJggg=='
@@ -3001,7 +2990,7 @@ $Systray_Tool_Icon.Add_Click({
                 $item = Add-SubMenuItem -ParentMenuItem $BuddiesMenu -Text $buddy.Key -IconBase64 $buddy.Value
                 $item.Tag = $buddy.Key
                 $item.Add_Click({
-                        $pictureBox.Image = Get-IconFromBase64 $buddyMap[$this.Tag]
+                        Set-BuddyPicture $pictureBox (Get-IconFromBase64 $buddyMap[$this.Tag])
                         Set-TrayIcon $buddyMap[$this.Tag]
                         Save-BuddySetting @{ Buddy = $this.Tag }
                     })
@@ -3130,9 +3119,8 @@ $Systray_Tool_Icon.Add_Click({
             $Powershell7 = Add-SubMenuItem -ParentMenuItem $ApplicationMenu -Text "PowerShell 7" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAYAAADE6YVjAAADGUlEQVRIS92VXUhUQRTH5+pCD2EvUdCDlOKuWazhSmVhhVgW1cMWZV8qkrvRW5QQPRRFvfRSCEYIFfRJuEUJQVL5EVhklq6VC4mtstuSsgQrtpjux53OmZk7915v9SQ+uDDM7Oze/2/O/5wzVyFz8FHmgEHmMeT9GK3z1Hhvoo2UUhgqoWqaj3SaqGoKBq5hliMJaxywl0qSNJsTbG98NKhY7NrpuRj/Hg4vBHUBUJkwQqziGkgAEMQgfEbIRDRkhTgrPKguAQPtt1lt5G+q5JHgKTEamHk0IMoE+VoTT0MkufmFv/q7ni2yROLcVgcugUUwVBAdaL9LMjL43/JK3ExoplXGk7NIRBT3XkWu7nEp9SbIux/U5a2p66WU54DbkyZfu5plpecU7xAnFieHCDRRHkUCvuNvCTI5HmX6Jkhjy4ehpsZreVTFPAiQsGWou0WCsp1bwBYjhCfZaBWup+IxK2R1eS24JCIwVhDuAWykt1WCljnWi4rS7eFWAVDMyam4FbKqrNoE0UsUq4snO/y5U4KWrCgUiefCvAj4+k77z75DGxcUm+zy+Wjm+etVKUy2JsgqSIhr1RMJvJGQxdkFppJlAGZbgpyd/p15QVFUE+R1MNl7vLbahbn4mzjuRQJdElCw6xwZ8z9kueGnh4QLABYC2C7zLRcrNx+EfAuAqZtTZLjvJbHZbLpNOWtIanpSJtuYB63zjUUlIY7S/VC5erNpjRb61CHFn7b5iffoERYptwbmJM5Yttwm3Ku//Hjoypl9Du1BCbFv2AuR6J1cYM8hz5ubJMBecYrEBl+IyhF3FVokxLVewQd8PbSocp3Sb4J0BmmD57D7BDs9gIY/thLFcOMszS1i1jy41Ui2by2zvILKK0+SjkcNxn1T/7EvFVWnJ74NBrK0kg31t7EHnO5LJPrlibybKIBio0ELZHnpMRJ+e+P/kNy1u6EY9A42XttaJ2v308wkY07gpaBfO/lF8ZFBf5aFCPcRg7DSw9nwbpANJt4RRgiu8cY2fpq7afWBEuX+P8Oy+DBLG/P4HT9LDplk/gBqUDhH4Vn75gAAAABJRU5ErkJggg=='
             Add-ShellContextMenuHandler -MenuItem $Powershell7 -FilePath "C:\Program Files\PowerShell\7\pwsh.exe"
             $Powershell7.add_Click({
-                    $PWSH = "C:\Program Files\PowerShell\7\pwsh.exe"
-                    Test-Path $PWSH
-                    if ($PWSH) {
+                    $PWSH = "$env:ProgramFiles\PowerShell\7\pwsh.exe"
+                    if (Test-Path -LiteralPath $PWSH) {
                         if ([System.Windows.Forms.Control]::ModifierKeys -band [System.Windows.Forms.Keys]::Shift) {
                             Start-Process $PWSH -Verb RunAs
                         }
@@ -3140,14 +3128,8 @@ $Systray_Tool_Icon.Add_Click({
                             Start-Process $PWSH
                         }
                     }
-                    else {
-                        WingetCheck
-                        $startParams = @{
-                            FilePath     = 'powershell.exe'
-                            ArgumentList = '-NoExit', '-Command', 'winget.exe', 'Install', '--id=Microsoft.PowerShell', '-h', '-e', '--accept-package-agreements', '--accept-source-agreements'
-                            PassThru     = $true
-                        }
-                        Start-Process @startParams
+                    elseif ([System.Windows.MessageBox]::Show("Do you want to install PowerShell 7?", "PowerShell 7", 'YesNo', 'Warning') -eq 'Yes') {
+                        Install-Application -AppID 'Microsoft.PowerShell' -PostInstallPath $PWSH
                     }
                 })
 
@@ -3298,18 +3280,17 @@ $Systray_Tool_Icon.Add_Click({
             [void]$InstallMenu.DropDownItems.Add([System.Windows.Forms.ToolStripSeparator]::new())
             $InstallMenu.DropDown.ShowCheckMargin = $true
             $InstallMenu.add_DropDownOpening({ Update-InstallCheckMarks -MenuItem $this })
+            # Shared by every winget item: the Tag holds WingetId (and PostInstallPath to launch after).
+            $InstallWingetApp = { Install-Application -AppID $this.Tag.WingetId -PostInstallPath $this.Tag.PostInstallPath }
 
             $7Zip = Add-SubMenuItem -ParentMenuItem $InstallMenu -Text "7-Zip" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAAzklEQVRIS8WVUQ6EIAxEy8mAkwEng5uxVB1CiK6yaVcSPhSc1xktGlIeRlmf/gaISk4iHFQlgOmAGCOFEEQ4KSVivTZeAAz0Szd3br86wKJzjnjOg8VFAFcipqUqAhgrZyc5ZyqlkPe+Axg2DoAfRYQHZ3G+PwrxNYN5/gSodW+Rsdo5Iqxh75KDOwBHxtVzhPgoxAB4J4gRsS4Bjo5EZ24aiAjRYI+1dnOxBDjrthmAPY9essRh9M5ZJFH5iUZvRfUfjpKB1qBqyoewOuADIvfhGTXOkGgAAAAASUVORK5CYII='
             $7Zip.Tag = @{ WingetId = '7zip.7zip' }
-            $7Zip.add_Click({
-                    Install-Application -AppID $this.Tag.WingetId
-                })
+            $7Zip.add_Click($InstallWingetApp)
 
             $ActiveDirectory = Add-SubMenuItem -ParentMenuItem $InstallMenu -Text "Active Directory" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAER0lEQVRIS91UXWwUVRg9d+d/d/aHdsuWbQWFtpQfSTTypIlINGokNib6ZGJMfMBEw6v6Vl+MEoyBBBMeBI0aBAIPYID4oBASo6TFYmgBS7u73YXdme7ObHd3dnb+7nhLYgIPhRolMd7JzZ3J3HvOd865+Qge8CAPGB//DYKjR1/jsiknY2jG01a5qMBzNISuKVBqd1pUCsHHvcBOi5y8whHUTTTCFVdF6YEdH8yZ91QQhvuk0vXm+kqpsYOX0i+3veDxwJnmQ1ezArfWJtR0aWAL8DtSy5RUXeeqphP/sR2Ie0c/G7u4aP+SBNrs51vmdf2dhdr8812ZLdn+ge2CEkuzIwYonUNIrwHhVXQas9ALK1BpbA4rerkpK3QqDJ3znufnInZw5C4CM3coVbftYddxdzUt7yU5mkj0rYqB+DNo12fht2ugXhPUqcFzW/BoEh3xBWitFHs3sWljPzIr03B8HxOXJkM/6HnxNsG1S59ki3PFbb3Z3lcFUX1Kivb0dPX0IaZGgcBioDpcOw/HmMTCrTFYCx7C2JNoYgPqtoPubh7rBh5CTJFRMwzkZm+iWm34ltv1Ovnh1K63T548t7NmWOv61/THB4eGsHbtIDKZfiiKyjx00F6YYcAXsXDzIhLdj6L7kREU52sI/BY2bFyDbDYD1+lgNjeLM2ensfWJRTLiffXNz6+Qs8fepRNX/iDFUgVlrQ7CCYgnUuhiM8EUxBWCqOQiKlNkenuRXf8sKloOK5IShjc8DIHnoWka5oolmHUKNSZDVeMwai3n+InzI6ScP+SGxBcsqwmtUoVpNOB6lAVJIQo8OI5jpBx4QYIksSkKWJXtQW8mjUargcqtm6x6D0bDh645GBjoQ6Omm+3KxJcT1298RLTCQVdJxIQIYXEQiW0msDse2m1G5DQR4UJWkQJFkhmZAEUWEYQUhXwOzWYTyUQMP10oQpJlbBxeg+qNC5PN8tX3vOqVc2/sgUX04kFPUeM8CAuUJECIgAjhELLH913YloG2XQb1O0yByJQFrFIdXCQCUVIwV2ogEpEgcjCbhfMnKtNX39/56a3qXy2IFKf2X44m06t5JZPkxRhBGLL7vfibUbCV0hA0bDGCKiNcDHIGMrOKBgTzNZfZanm9an3cnBvf19J/+/6t3exy3THI5dOj/aIaXcdLyW2CHH1OTa/cKsdTIsf8D4IAgRvAD1ymymDTQaGQYzlwGL9ch1GZt/ukqQP10szeNz+uFJjJt0u7i+DOj+nT+yRbaA/xEX4knl39TDTZNUAEOcV0qBFSYzE5yDPv8/kFj3O0G7Xfv/sw94t9fPQc/KW68pKtYmzsgKCYrc2cGh0UFHW7EvOHOYl7rJSfco8fOXPY16/t333MuX6/dr+sdj12ajQqiDFVXZ1M1Qu/0sPfflHe8zWs+4Hfs9kt5/By9ixLwXKA/nYG/wR0yVv0b4H+vwj+BByiDCpt1NN/AAAAAElFTkSuQmCC'
             $ActiveDirectory.Tag = @{ Installed = { Test-Path -LiteralPath "$env:SystemRoot\System32\dsa.msc" } }
             $ActiveDirectory.add_Click({
-                    Add-WindowsCapability -Online -Name Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0
-                    [System.Windows.Forms.MessageBox]::Show("Active Directory has been installed.", 'Installation Complete', 'OK', 'Information')
+                    Install-WindowsCapability -Title 'Active Directory' -Name 'Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0' -InstalledPath "$env:SystemRoot\System32\dsa.msc"
                 })
 
             $AndroidEmulatorInstall = Add-SubMenuItem -ParentMenuItem $InstallMenu -Text "Android Emulator" -IconBase64 $AndroidIcon
@@ -3318,9 +3299,7 @@ $Systray_Tool_Icon.Add_Click({
 
             $Brave = Add-SubMenuItem -ParentMenuItem $InstallMenu -Text "Brave" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAYAAADE6YVjAAACFElEQVRIS5WWvS8EQRjGn7kIhSg0xFelEVHoTkWESkNwGoVGhcpHQqJQKBRo8AeohUKikCiUFCof10gkvgqN+Aribsc7e7drdu6dNTvJ5HZ3Zt7fPM/7zu4JxDTZVbOFr9QEPA+QecAr9jzd+9fqVwJ5r19c5/dtoYRtQHbWn+AH6UKgfyBqPCdXxY03x8WLQGR3s4T0Az7T7qqpF3frAFGKPPlNvQI0XdwhjO1fyAxuIdEU7oIm4alR2ZAM8qkWRtqleESbkMMUnms72uPtNWBspnTW8jSwuP73vIF3v6DEBOmAuMrgxgwQKRGlEB1wuAGcHwOzu3bU+AAwNQ+0d7CKfEhEBacgU7SAKhZ7moX6jh8Yx7Xx/yHB/gYJZkK44MH8CGQEk1Rym6FWWz6SQHSVKQy5JV5ZVtsCbGZLfTfVOCU+CKMrUhBbTnQIU8J8del1ZFrXS7A3mqD6lZFs2xkJSjjRWUkT6JQ/v2CsUrHDI+p0IOOUqGiJIWpRYNfnOzBaBbzSs1QlcP8BvNC1Qz4iSljL4vLD7FyfrhIe3Edf9S4vS/MFE5PwZBDdOh1iAfgW2ZTEWqbOicrJEVVWKxmgcmJpOqAkJz5kCWW4oA+v2QJIcE5skDqUi7Poevs33syPA8RUwOaEUx+enxiILbgzxLcwgwPk0OfnRLcrhRVxjwV7dgojVrtYVT30f6AIEVn3tb9bgCfeuItiYwAAAABJRU5ErkJggg=='
             $Brave.Tag = @{ WingetId = 'Brave.Brave' }
-            $Brave.add_Click({
-                    Install-Application -AppID $this.Tag.WingetId
-                })
+            $Brave.add_Click($InstallWingetApp)
 
             $ClickPaste = Add-SubMenuItem -ParentMenuItem $InstallMenu -Text "Click Paste" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAYAAADE6YVjAAAC00lEQVRIS7WWOYyOQRjHbVxxFo5CtygkJIhQIBoKsptdRwiCUDkqGiQiEkIidASJIwq3wpVdjaMh7jgLFLKrRrGuYMn6/b7MfBlv5vv2U+wkv8z7zjwz/3fmmXmet65X5dKHrpEwCebDdBgDA+A7tME9uAov4QP8zk1Xl2m0bTQsguVBpHeVj/lD3zM4D5egHbpS+5zITAx2gXX/KpMXu37ScBd2hBWW+4sik+m5BcOSGb7wfA3OQmvS3sjzCmiGwUn7J55ng1tYKlHEekaYLAp85N393g9vg326DY6RcbAliA0Pdgopfh+6oogOPRa+QLt3sBvOQGfylUWR2NWXh1WwHfSn5SashTZFPEWbwqT6wBVszgg4cGIiWN6O0BaF9vHuivTRNjigyChogSnB+AT1hsIKkrmrPvaj9yisDlZPqJsUmRdEPKY6eRpEH9Q6eWo3npdHMAi8N42KHIH1wUofrKwys3chlmUV7JzzAiwJ/YdseA7eaovH8noVkUqOLw7xZHkyLU8V+QxDMhMrHJ3rCpYGu6/UMbT4xXFFHooXmXk6FPGIesKKJScSj7z2jqtFpNNBHTC0B0VKK+kJnxi1r6Q+OcyL98JifPJ0/RNFk1XWerouMmZxGFc6XXPBwOc90anekzeZ7au1aQKG3pOB4D1piDfeKDs1zHKSeh2kMatWAW/8cTCOWR5Dc4xdG3nZA8YuI6hR9VRGqLvYtYYxe8FI/gOMXQfTKGzMmRO+wNRqFD4Nv5JlVLqMrsB45aT1wf4GtVG4Pc0n5nC3Lc0JBk6j6mtQIJdPjFVbwWiR5qIm3h86ppgZ3Y7biZAf9Q0MNa4qhgrbF4AnsQF0ciymCjPjq9iQy/FmyJ0wC/4nx+uDO2COf5CIltNvsa2ehoXg34p5Pxd24hiPqX8r5+AyvIdu/1biYCceAW6hUVWfjQW3xv8uU7Q53C10a9ym7H/XX2JcoXmg/8/OAAAAAElFTkSuQmCC'
             $ClickPaste.Tag = @{ Installed = { Test-Path -LiteralPath 'C:\ProgramData\ClickPaste\ClickPaste.exe' } }
@@ -3341,52 +3320,38 @@ $Systray_Tool_Icon.Add_Click({
 
             $Firefox = Add-SubMenuItem -ParentMenuItem $InstallMenu -Text "Firefox" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAEpElEQVRIS7WVW2wUVRjH/3PZmZ2d7YVdLGDb0Iam2ASQAOI96VMT8QEkQZvAA1FRG9poQCPGS9YYAlHkAcQQhKSltKUhwUdNjMoL8RLRIJgaQKEppLS03RZ22dvsHP9nZrtQWkjEuJsvMztzzv/33c63Cv7nj3K/+uL6ywKugFJ+6J4a9wUQYy8KBFTAIWDWId5A3M3Rfw+IxVTR8ncehu7L5vNQHui4q86ML8TxJ68oa09WzuSVuPA8vae4FQAUbnddQhjJg50zak17KD5fJkRpYEzd8FNUHFm1uWKH3XHtj2OJSZg4vUbAJCAcBFRulwoEIO9Cmd89TW/KAxFbKmBzcakGXI4KzFKVFV3zjVOnDuQkoLGxUf9+u5Xz0hOk2WYBIiORIJyDadQr1e1F3eLN+bZHS+vC2QmECJAmIbYBJxX69Os9+7aaqgGdKZE6OeHgZjaFtUc/BB8CGtdqBOYV5DU1zqq0mgsOd0unigDx2gqBELdb0iSEr8JskLCBdC6Cbw98AYNp0BwXQrhIOWkkbk6g+ehOQiguATpBDvfYTFdtl6d9C7BxZQGQB5ZZQBmLeH6CILmB9yzqsX1fwnDy0Ng5+UwKq3vf9Ys87BQAEiLrQ0DdbYDly18J/FJ/JosgxStpiwwKyjxTWJrsGGlBA52t+6E7DkQqCXdiDBt6PvKPwRC9l90lARGgdlXAunSpPe1FMLZs9eZZ80c+8wBBeiTtCQpGDAgjgO17O6AZIQRhwMgJ6Jk0tGQCYnwUmw5+4DfYAAsuxeu594aBG0LbWfpY5zse4KLauqOm6fdtsAoAk4vMPH6tXIrO716CKC+HFrRhsNChjAY7yVokrgPxEby+530GQJm/SuB115IsMGohDvXjSFPX2x4gUvdM6WhVesLznMJeJIaLlrNbkLXDcMvKoYZsmKoJK+sDrPE0lPgYtm1nJzmM9lIZ8EiK+5mqwTB6+9yFzbHec36R163TxMC444l7JkG0p3JY37MFwrLg2iEYWhAhAkJJ9gMBejyJ2Fu72J6smc4UVbLY8nwMlkI5sjCAEzGn2EVDeFVUrLzoA+i9b3lcazLxxuFN/ljQAwjkVdh01CJk1xqKC3o/j0UO0nOKi4QFxbGhbPVPdRHwm97yyZKGy2+qJnNIYeiFKAK86gLrhzYXR1M5l+yr3QuUcHuE4hbFQxKgQVyZjWRQ/aZkR3fTFID8cZVRzHl4kD3NyaAXIBIQoIgEarxKU6Xxt5xFQZrNs8K2zgzMhsGDqbZ3qozYG+FTZlHJQ89Fz/0ZHZm7eJRCzKdKkBQsivvR+ACa3C3NUpDon4NgiYHKEWfu8Nmeoclwp02/Z6tfWHRwoORMGjdRs5jJVhmJKmHSY2mTgEn3BOKn51HcxHtlicd39/X+WMzlnRFMvojUra3qu1Ax4CDDbxpV9VkEZOsqBBTMySm4djYqjx50Wk3D1ZrxvuP9t4tPS9GUlxzNP5xs2L0gp7S5yHGKyjnqf1Tvq9MMDGpub9vT0Q0n2JJ3it8bMLmaf5F2+88Vpq5Fv+qvbpWPm6sG9w+LzFBy48phxGK3yDMQptVgJi/+y7N/AK8msCgh9PN5AAAAAElFTkSuQmCC'
             $Firefox.Tag = @{ WingetId = 'Mozilla.Firefox' }
-            $Firefox.add_Click({
-                    Install-Application -AppID $this.Tag.WingetId
-                })
+            $Firefox.add_Click($InstallWingetApp)
 
             $GoogleChrome = Add-SubMenuItem -ParentMenuItem $InstallMenu -Text "Google Chrome" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAYAAADE6YVjAAAEhUlEQVRIS72VW2hcVRSG/3OfSTKTtJ02xYS2aVRqES1CBQuK0kSkUqG3mE7UJ4tioWhFHxRRFB+ktI8qEvFCHjTEuy8tIbFWEwoJ9QaCbQ2VBloNaVKbmTPntv3XSU4zmUxaQXAxizOcvff61nUfDf+DaP+SIftSVIdqUENqiepS1fVsXA+Snn7m0YJuW9Co0E3ai4AgROQFUJ4HVfLQ8HZvDReKS8GWguiTj20PNdumcROaSYChQ9c1KPE7iqACQnyfIAJLPkDgir5jEiW9WCjVINbEjjYPYtwyoRv03tShEQKN2wlRinZCgvwAERUSlUBLAVYdPWETQeq8VEKMi21bAjEeA2gchgFFgKYnkJgCFfEpAIEFPtPHMjGNAmz8fkTyKnWLZQHkvefuU9uGrwAWoxbDBGgmtxCgaQKZLbOSnEnKQsJCAc0CVTCfqdXDo1dtl0OyXce7pl999kfUWg4955IhSqD8F0KyO4ZQQzrLnyKwUgip57vLCyLJD3YpcVYkAZUfrB/4Dh5tfTB6CY/fmSNfoTiyhtEqBhqwdlH8NJ0in0LWYdwSxW4lvln5b7o8qavIKwd/oPNaHJFIpv9bvN5/AQ7rJGViGeAyPS8/0AzjbJpRL44ESiNExU2QQJYRMplAxPBLT4+yNCZyA0N4/stxpC0dlmlIeaQc8ElyWewju9bBOZdelK65SJZz4VICWcN0nUvSJScOPjUEx7TxW3c/+n6eQpqNYMqs8ISUIxAI9YWtTdhQFFsLRUUGzI3hWr79I4G05ge6zmgySmVy4MkTeHH/Z6ih+5ZASIhHRSAy+FGIK+ysY213VIFYhPg3cuFsAmnZ25//Xdq1PGX2pIu1xmsYHJthk3ENBPEUm5ai2FwR9m3OoXN5S0UYGqIwDevWwnoujCWQxoeP5i8YNg3NdVhy6vCGI2h/91emjt2isyZESZlDRuGxhQefuA0Nfy5Ml4pMBF4WqU2Tq7n1YgJJd3y9t2CkCKmIRmCHbj6Me94aYcPIQIoXMichTh64C8smViyOIqiB5zagdvN4fHEmEG13X2dk1NFbRiOXeeV980brITzy0SkMnZ9Ce2sO3Xs2Yd/x/fji9r55CNtWRTb8Uj1KM1k03H0m9qjcVtOezzvP62mCLLlKZu/DalIqRAiKET7Z+PFigJeBX8wgu2WsmYvjsqHcjP5QT0foMBo9RSUo7ray2ySxWCqENKTwaQwR7/U4gsCrg+/WwZ2pxar2X65e+5W+Zrb3dFx2ahjNXH30uRrFMcuMcEh8RtHb0stWFuMWy+Mg8GsRuCm4hVo03v9Tlrv/TpyqlpDctvd3/5WqYScxIvmcaNK+kl3OScgLrKf5Kxo3Yw0JCH3WwXUISKPpwVMruXOiPM1LZB31W9/ZOZUixLFnr3udH0eNRfIDhQ9vGI5TFAZGDPBKFryiiXW7RhtofLqyjktBZJ/ktOXeN3ectm0OoYD4pnvl6Xjio1AghHo6WjtGbpKhk/Gp1ijXgiT7BSbfhhw1Q02GXnIuaRHPqxq/Vk2qtu1/efkPmizDKdT29VcAAAAASUVORK5CYII='
             $GoogleChrome.Tag = @{ WingetId = 'Google.Chrome' }
-            $GoogleChrome.add_Click({
-                    Install-Application -AppID $this.Tag.WingetId
-                })
+            $GoogleChrome.add_Click($InstallWingetApp)
 
             $GroupPolicy = Add-SubMenuItem -ParentMenuItem $InstallMenu -Text "Group Policy" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAE4UlEQVRIS42VS2wbVRSG/3k448RJWs+MYxIndlxKiASqwGlRChVdIiFgwxJYsEBIiFUFEmLVJQi1XSEQIDZsqkitlLosQNCqFGhCaagIbZpHH0lM6vd7bM+bM2M7OH0lY13d8cyd851z/nvOZdBxTU1NcYcmn3qeMZIfsowxYYMRAaa1ojkzDEuDge38LKv1zt6cNYNDo7GheLnyl1458En7a3fBtWu/i6LP+7kkd7/OcaynE96+t9u2XFjnCgaWzSCZzMJW51EpJ5IW5zm0Zcn8zE/BUHT01G5x9wsPMr7ds2K5gZX5s6gVZ5FIVyo8evZvAdz49ccheU/0rBgQn93O2H3vKZxbdxKY+fmbq9XsbxfXs74rtURwagtgjgDhx6NxURZjhmEilSrCsmxYptWcKT82zc6vfUliH0Sp19Vlcfk2Ls/88dFbb7/3afv9AwGS7I9ZJKCq6nBybrcS3547ve/q4uEMR5DF5VsE+PPRgJE94bgcEAlgtwDkb8vhnQGu7ATgpxQZlKIypcaCaVJ6aHZADphi2gxCFHshUYqaETgpmtsOMEIR7Ip1GtmR4C7gDgGubgcYJkB/TG3oWFrKwDBNGIYTRTuS/1PmgCMRvzucelxcXm0B3n+4yCPRQRdAydiR45uLnAhW1gjwN0WwLcAXc3bQ0lLB9d5oee9E4XSHTrEjkX5Ewv1NDVzAtUcBpodGoqNxWe7eooEDqVHKTBKYYxnwHINcrgCWZV2YIHggyyKWbq7j8uzCdhEMxGVJaBZaugGFIkmkS0gW6mB5LwTORiG5hkuzc4gMh+HhDShKAa+9/CJ6+noxd3n50YBwVI5LkifmVK3aMHHm/G3sP3AQBu3MuqYhsbaGhYUFhCIjCPj74eEs3FhcwV+zM5icnECh2Jg2+b5jJoN1NbWauL+So1JcErlWJVs4fW4V+yYmyRALgaeU0BeapqNYqSCXL6BSUZBMJZG/exe80AOW4y3D0KtURyny6bv7AaN+ArCUIgupjIYzF1bgEwdQyGZQq9UwNj5OKlvo7fW554HzrFSqIJ3KwKSonf+FfN4tSmlXX/oeAIk8GoxLfmyKfPKHf7F33wFU00l8P30Gh195FblMFvlcDpVSGY1qGbzXB4YEZ+kwyqRSpBWPgWAAHsYubwKOHj3KHn5u79D4WHA6IKkxx0vnOnlOwciTE7h+dQ5KPounDx6CSl5yPLVnyn0ll0S3GARPRjfWN6DUFDwxPgaPR0Apm24Clpd/Ccii+KahaSHo+Te6vfpj7QZ36nwB8vCYG7ppmdBVlZqgCk3XyPsaWLWKOivA09WFEqXGaduhcBi6oaOazzUBq7cvvDsY3H2cdPQyTsXYjpTN69vT8zD5fvdkdgG0k3Rdd4XW6L5cKILz8K4e1XIFg6FBGiFnrV3KpBTX0D+Xjr3j9xWO02Hivbc/5Cos0iUeqSLPZCseKA0PYzEeRjfBkA2YVC+6ocGkB/V6zTU+NDwErdFQVm+uNE+0Lz77YEDyb3xMm1CiADqO9SaOAmIsm4NmdzFVtYdTdB9fVfv6VYMN6IYdoBbit2xLaNQb/DClRx4I3M1nMl+t31n72gU4AovU2AVB2LKrHtbtumo1JmeW+EKBF+qW4VMN7NUN9RnTNF8aCg1LPb3CkfSKcvHEiSP1/wDbXdYF8bisrQAAAABJRU5ErkJggg=='
             $GroupPolicy.Tag = @{ Installed = { Test-Path -LiteralPath "$env:SystemRoot\System32\gpmc.msc" } }
             $GroupPolicy.add_Click({
-                    Add-WindowsCapability -Online -Name Rsat.GroupPolicy.Management.Tools~~~~0.0.1.0
-                    [System.Windows.Forms.MessageBox]::Show("Group Policy has been installed.", 'Installation Complete', 'OK', 'Information')
+                    Install-WindowsCapability -Title 'Group Policy' -Name 'Rsat.GroupPolicy.Management.Tools~~~~0.0.1.0' -InstalledPath "$env:SystemRoot\System32\gpmc.msc"
                 })
 
             $PuTTy = Add-SubMenuItem -ParentMenuItem $InstallMenu -Text "PuTTy" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAYAAADE6YVjAAACW0lEQVRIS62UzWoTURTH//fmo2hWgqvaWlBCH6CKm0BKu1XBhY8gxRdwoTaJEwTTFxCsgitfoOlmIDPT1BhQ7NJFFS0qiBtX0eKkc6/nTEicTCaZtJ2zCCE59/zO51/gmFYoFHTrdWviq1wuh87vjug7Db5My7JtW8f5kg8MwzgZREBo13WRzqQjObbTxI5jQWt9OsiseIh5VKAiMDWrCcdxkoe8072qroojJA4BBH7iOT6pGrLyC5bQTRbyAxv4qy5ic/MPXq59pfYoCCGTgwhxBh11Hhl1DnOpa1gQTwfT2bBasJ3G6WaSlil96M1D6izS8iMUVRA0Hnp/8FWjStUJ9qHPKSyfz+sP+5qmAMzIz/Rw8qlYtuXD2IxHhv9uovm3oS+TT3TgrGDoEf0vh+JUKpXxEA4a9Hb1JcpEEGIYoml1Z+Q+OOsoG1sJXWooXe55L0NJ23OoFpESXZxNHeBBad0f8DjjNlFifqeG2sWQBVEeefcNVfgV0aAz8iCuw/7/fUAkZE6WcIFko+coKQsPb7xFykkhK76jVL7vDzMYJI46UkkQ8gsvsHLnHq4sZVG+ewuvGrdpa3aTg7AmcYt4e1iX2J5Yu6SyJONJVfJf+NzB8BOErGNWjg6fK6mZb7HTNE9eCd9H8FInrSb7LS8XceP6TdS361MctL/HQjesBlZXVuMWhQTQRrFYBF/03vs9bNW34iEMUNoLn8xEWF8IjwlRA0ELR+eAvE19C7bUNM1n7XZ7La58kuHxs2DZYLkOGv8mpcRjkvKu8mJbNbj4sCjGZRaWjTj/f65KYyxtPszLAAAAAElFTkSuQmCC'
-            $PuTTy.Tag = @{ WingetId = 'PuTTY.PuTTY' }
-            $PuTTy.add_Click({
-                    Install-Application -AppID $this.Tag.WingetId -PostInstallPath "C:\Program Files\PuTTY\putty.exe"
-                })
+            $PuTTy.Tag = @{ WingetId = 'PuTTY.PuTTY'; PostInstallPath = 'C:\Program Files\PuTTY\putty.exe' }
+            $PuTTy.add_Click($InstallWingetApp)
 
             $Powershell7 = Add-SubMenuItem -ParentMenuItem $InstallMenu -Text "Powershell 7" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABkAAAAZCAYAAADE6YVjAAADGUlEQVRIS92VXUhUQRTH5+pCD2EvUdCDlOKuWazhSmVhhVgW1cMWZV8qkrvRW5QQPRRFvfRSCEYIFfRJuEUJQVL5EVhklq6VC4mtstuSsgQrtpjux53OmZk7915v9SQ+uDDM7Oze/2/O/5wzVyFz8FHmgEHmMeT9GK3z1Hhvoo2UUhgqoWqaj3SaqGoKBq5hliMJaxywl0qSNJsTbG98NKhY7NrpuRj/Hg4vBHUBUJkwQqziGkgAEMQgfEbIRDRkhTgrPKguAQPtt1lt5G+q5JHgKTEamHk0IMoE+VoTT0MkufmFv/q7ni2yROLcVgcugUUwVBAdaL9LMjL43/JK3ExoplXGk7NIRBT3XkWu7nEp9SbIux/U5a2p66WU54DbkyZfu5plpecU7xAnFieHCDRRHkUCvuNvCTI5HmX6Jkhjy4ehpsZreVTFPAiQsGWou0WCsp1bwBYjhCfZaBWup+IxK2R1eS24JCIwVhDuAWykt1WCljnWi4rS7eFWAVDMyam4FbKqrNoE0UsUq4snO/y5U4KWrCgUiefCvAj4+k77z75DGxcUm+zy+Wjm+etVKUy2JsgqSIhr1RMJvJGQxdkFppJlAGZbgpyd/p15QVFUE+R1MNl7vLbahbn4mzjuRQJdElCw6xwZ8z9kueGnh4QLABYC2C7zLRcrNx+EfAuAqZtTZLjvJbHZbLpNOWtIanpSJtuYB63zjUUlIY7S/VC5erNpjRb61CHFn7b5iffoERYptwbmJM5Yttwm3Ku//Hjoypl9Du1BCbFv2AuR6J1cYM8hz5ubJMBecYrEBl+IyhF3FVokxLVewQd8PbSocp3Sb4J0BmmD57D7BDs9gIY/thLFcOMszS1i1jy41Ui2by2zvILKK0+SjkcNxn1T/7EvFVWnJ74NBrK0kg31t7EHnO5LJPrlibybKIBio0ELZHnpMRJ+e+P/kNy1u6EY9A42XttaJ2v308wkY07gpaBfO/lF8ZFBf5aFCPcRg7DSw9nwbpANJt4RRgiu8cY2fpq7afWBEuX+P8Oy+DBLG/P4HT9LDplk/gBqUDhH4Vn75gAAAABJRU5ErkJggg=='
             $Powershell7.Tag = @{ WingetId = 'Microsoft.PowerShell' }
-            $Powershell7.add_Click({
-                    Install-Application -AppID $this.Tag.WingetId
-                })
+            $Powershell7.add_Click($InstallWingetApp)
 
             $RSATTools = Add-SubMenuItem -ParentMenuItem $InstallMenu -Text "RSAT Tools" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAAh0lEQVRIS2P84afzn4FIwPj/n05dNjcDIxPDFSK1MDCOWkAoqEaDiFAIjaYigiFEhyD66aulTdgdEBVsf37dyctlYOBiElQhVg8jw4LnRFvAICZx5z+DFwMD0xsSLFj4iujCjuH/X53/En5AxzMSX9gxjFpAILYZR4OIUH4YDSJCIcRA8yACAEAenUVOCa2cAAAAAElFTkSuQmCC'
             $RSATTools.add_Click({
-                    Get-WindowsCapability -Name RSAT* -Online | Add-WindowsCapability -Online
-                    [System.Windows.Forms.MessageBox]::Show("RSAT Tools has been installed.", 'Installation Complete', 'OK', 'Information')
+                    Install-WindowsCapability -Title 'RSAT Tools' -Name 'RSAT*'
                 })
 
             $VLC = Add-SubMenuItem -ParentMenuItem $InstallMenu -Text "VLC" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAEAElEQVRIS61VXWyTVRh+Ttu168qqW9kYbEOZGLO6bCzKdDOamG5E5xCVxURjJBiFJXqhxmiiMfECRWW7kjuNURLNQrgQiAIhxgunExiwLjoYk26xg5Yh/V3HSr99r89pFTMRWsGvOV+Tc97nfd6f5z2fwn94BtarwxkD6sHdsrpQmCrUsP8BdfTh+6TZfhOwc48a2/Cj1BeCLZjg6HOQuhLAsQT42Q+07EJB2IKMdKTjL0MWG4CdBGcngNs//R8Jnt20aflja9dNJmdSeLJ7PX45eQqff7aj4aO+raP5ylRQBm+9s0VWNTWK19uAaDyGmtrlOLB/v9q88Zm8+LwGOsJvDn4nlZUVUlNTg+HhEVRWVWJyYlI90fVQXnxeA03w/aEhqV62VA4fGcKa9naEz08jFk2otrub8uLzGuxog3lPM9RiRn+kugctq5th2dOD0GgQP4wBz/907WbnJdj3COSOFUBZOWBJAtZSplQETAcB/2ng8W9vkGDgKUhtBbDIBbFfovNiEjmBRBhqlHL1fX0DBNtbHHtb69NdFZxep0ECBzNw5TKYjUONB4CBgCPwxkj6tqvJ9ZolevGV18yeWK8qc3OC5yCORYyeJMKVTkIFJoHja7+UzRuetlwXwXsfbjMbG5tUKjULuDxyf7IfiUQMmfbtyCTDKhgMIpMxpPvRzusjeH9bn/g61sBeZIPVZod/+Dh8Ph9CoTCKHA7MJBOYmppC97quq1biioPI65DoNNDv7UXdijpcmruI6tpa/Ho6AI/Hg4aGBhTTeSQS4SxEEZiYxNipk+gcehdVZYB358KmX0nwKswzZ4ETXK43D+gIlcvlgjFvSgezGRwcRL23HiKizvwWRCwWkUxfN9xs/EpehN5dWFCuBQTRtyHpOOT8BSAUByqoefedjWq64xO4St0y4vfj3tZWxBNxGBlDle17AfFjQzIVoQhIsIz2N3sgt34M619NX0AQ30KCC5BDI0Ap5VhO1ZS4oJzUPlKUqZ0y5dIyFQWVngPOnYOESBBJAXfVAUtugSrf+neZFhDMfAAxKUf+cOIYh4sRFZdAFVOWmsBGx3rBBswDKsPBYxskyglf1ZIjtrkZ0Ev/QpDotYzbHeZKM0Ots4rzBAnLlIpS89yzMWm9b6ETxbAUSSgsODiEJj9E1srcPrhn2mxh50ZjqS7T5QyML9g3fRXQ2EKjzO88ZAksdGShc6Wz0AAixORK0xEzNbQ9Sa1VfxLQXnEwLZ0535cJZDcLQyAfgXZGIBJ0witBW2m/unUaIHSssfpPOdkO3lVZ7WQPuU9Ci+8fBAc7IaXFEKuVABpny5ALIZs5X4Tm/GjHXEoz0DZHx3d234SavQjV9lUO/ge+vG0orsMCrwAAAABJRU5ErkJggg=='
             $VLC.Tag = @{ WingetId = 'VideoLAN.VLC' }
-            $VLC.add_Click({
-                    Install-Application -AppID $this.Tag.WingetId
-                })
+            $VLC.add_Click($InstallWingetApp)
 
             $VSCode = Add-SubMenuItem -ParentMenuItem $InstallMenu -Text "Visual Studio Code" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAACTklEQVRIS2NkoBTU7S9m+Pm7R93WiuGmDw8junEYAiTZV7fvPsO/fwoM3/8wqDlYw7Xe8uWFm0u+BTV7/oNNBJE/gBbYIyyA2XTLj5eRPAuqd0MMh1nwE2iBnQ1Wz5NuQeUuhOEwI3/8ZlC1t6OCBRVYDP8PtA/oA/wWTLgKddX/awwFOtpYnVK+E9Pl4CCCWWCPwwf9MMOR5Au1UYOubAd2w2FaujwYVdZ+xqqGkaHvCnbNRToQS0q2/WfAlRb+/jJi6PM/D1KmsuYTDgtAsj04LPn0iYHh/WsGBlZmBgYmJtQg6PFC8aXKanwWgLR2X8YdDPfvMDCwAS1hBmIQ6PXGSH3KqwhZANLYdfk3kGTBGlt3bjIwcLOlM/T7zcImr7ySGAuy1v9iEJdmZeDgQGQikFtBfgPRf3+nMVQZz8ZqwQpCFhRs+g9Ocr//AcOcnYFBQhqrR8CClfoYQaS0HJ8F+RtRs/4foCU/fgKThiZuS6pQLVFa9hFHKsrbAJSAOQgaFiCfTA6ACLZewB35fxmMGOoMwMlUaSkuC3JBFqABmOEw4WY8loB01xkwKi5BsgDJRIgrc9ZDhBgZrwBdros1XJrO4ygqgKp//mNQ1FRBJAYMC3CHNKpMIxZLwPXBXwZFLVWIBWCHQmmkwCfWCgaGhnOoPoFaoKCphtUM0usDkDF1SJaALAAW19S1AGRJ7VmIT8AW/GVQ0IL6AMl/D5IEyKwyYYFRc+4eMHMqgiyQRwqih8kCVKj0YZZUnSlm+PW3R15DneFhCsJgmDQAWb/NTyvD9EMAAAAASUVORK5CYII='
             $VSCode.Tag = @{ WingetId = 'Microsoft.VisualStudioCode' }
-            $VSCode.add_Click({
-                    Install-Application -AppID $this.Tag.WingetId
-                })
+            $VSCode.add_Click($InstallWingetApp)
 
             $SandboxInstall = Add-SubMenuItem -ParentMenuItem $InstallMenu -Text "Sandbox" -IconBase64 $SandboxIcon
             $SandboxInstall.Tag = @{ Installed = { Test-Path -LiteralPath "$env:SystemRoot\System32\WindowsSandbox.exe" } }
@@ -3401,9 +3366,7 @@ $Systray_Tool_Icon.Add_Click({
 
             $WinDirStat = Add-SubMenuItem -ParentMenuItem $InstallMenu -Text "WinDirStat" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAG7UlEQVRIS3VWaXBT1xX+nvS0S14lZFmyjBcwBuqYmBiwJ0AIoZgAadpkSgaDm4G4LaUpYQLOECD+AyE1ATJAOuMSwCQZJxNISlnMGiiFiJK6uIBrU8ebbMmSwZI37cvruc+B0im549HIeved75zvfN+5l8MPrMrqIvX4ibAODgfn6U3KMk7KFdDWNLadl3GusD9+a8AdbFArlF87u2GvrW70Py4U938/VkOyPb9wlkIjq4gL8UX0PP2+M8RdPdGPeFyAUiVFyWID+nuCSEyVC8YMpTMex+lQKFa3taXJhmrEH435PwCVlUWynCVYpdFIN0UjguXmZQ9nsCjhaPejflen+J5KK0X5hmwoNFJYctRQqKXgOAjxGHr9vuh2+znJR7W1jZEHIA8BWPCMZ4VKXQpfM3QvrGLZ0otI0stx/cw9fLa7awyAApdvzEb+jCR8trMDgdEYIABPPpuKaXNSAh53ZIPrqrT2AcgYANGy86niSm2idFfzda/qkx0d8I1EIZEAFZtywcs5HNvXLVLEVnlVDpIMcmx9pekhG08RwNLXMqBU84FQOLZ+852btYwuEWD78emlyal8fXerL8PrCuHIu+0I+CgzWiveysGMMj1GPBEIMQGXj7nw9IvUawLbsuwRgHmpmFqaTPvC1CNjz+hw5JWtP2+6xjG1TJ3N73F1+VefPeLgZpYZcHgbAbDSCb68KhtPLzUyFiAIAs597IB1ogbmHA12/OY2Ir44VcqheIEe1jwNLh91YXlVtqDS8Afam7CO23miaJJCzV+o3XzXPHg/jJVESde/RhEKxCCRclAoJcibnghjhkoEZLxnTdFi+nw9PO4w7R1BskGBBL0M/fYAolEBcoUUxkylI+jn5nNv1xWuiYaj+/5QdZcjueFX2yZiyqykh9yOeqOwUZODviieedmEmsrbmPuSCaVLxpF0BLR8OwRTlgrNtkH8qbaHqgQ0Oile+m2moEng13J7L8080WzzLD592IGEFBle25aHpFQZ7ti86G3ziS8YzErccwZx64oX7c2jWE4qmrFQL/bkH5c8yMzXoPFrD778sFtMTK3jsXxDFnKfSDjJHfx7abfHHbIy47ClTeJhmaBBNTXQTgBspVOGr++ejL3rW8BoXFU9QawyFhHwF2r6VPre9Fcvju3/L0D5xizkFyfZuQM3SkKn6xzyC/VOUc+JxOUbe6fg/TXNcHSMuT/NqsKa3+dh35utiIYF/O6DfKSNV8He6oPtVD9mv2jEt+cH6FkcMapKSV4pfk4PXYoszP3xekno6P4u+dmPCYBWQrIMm488gYPVbei+O0pm42CiYHN+akT9zk7SuYRkOw7DVEnH7RHx/7RMNV74pRXaZJ4aHcSAO0T0AdkFujBXayvpJu6sZ0h+bCVSHzYdKkDQH0PbzWFoEnmkGBVovDSA81SliYJNm5NMtKlZhmweISVNLibCjHjwnTY0XfVizk+MWLo6w87tOV98wt0dWHz7mlfcwPRPyHjymRT03PXR7OGho6o+rGrFd/8cwdqaSZhMY4KNEUYp8wYzuEAKHB4I4wPqk4fM+gK5uni+4ST31qGCNdZs1T57m5+LkYb1JgWcnX5c/sIlupKGHozj1aARAj+Bv3e8SFSbGJwwxPFBf3HivumKB/Xvd9I4l+AXW3IElVK6ltt+tGiSSie58NE7bebmvw1i2uwUrHg7Fyqakt7+EO73hWA72Y9vGu6JFO4+Vyyaj2XOJMwyZwi+4Sjqazpx6xsv8smYNGIcoWEyWmV1unryTPMelz2wevfrLRxTQdlKM55/1SwGZEEuft6HozTs2NrxVRFxz4uB2TP2wYo4c8Qh9ojnJfj1e3mC0aI80HHLtW5s2H1eWJowTl5/ob4v4xQZLkJyW/yqBXN/lgYVmabhcC9OHuoVAd7YM1ns0YPAfpq6V75yo4EAZHIJFi5Px9yXTT0+Dw27chp24luA5N3jRZUyntt16mCvip1ejIKpM5OwqMKCfzcNP6zg+QozFqwwY9QbQTvJtPHiAJpvDIoqKllkwMKV5gAZcP3mlkfGNUNgB07a7FilNoGvufZnt+rsp06EgjGUlZuR9SMd9m9sFTPJzFdj2bpsfLG3C32dAVHOCqUUzy0zoWTJuEBgNP6YA+f7MhhI1oL4KqWO39T7nc/SUOfg5AqJaKL9G1rFhotz5s0s3CFZ37kxhIwJavx4hVmw5Gp6AyN0ZF78gSPzewyRri2fFM7SaiUVdM4ucvcG0slcnI1U1N1CzqZTrrA0Bem5agx5wgI9c9LJd5puGXXEuY0p95FYbMI/fjF1pWemWoeGovMMZlWZTCkpoFk/dm3hOVckSNcWV6hBp2XXlj66tjgfe235D9lqJYTkn44bAAAAAElFTkSuQmCC'
             $WinDirStat.Tag = @{ WingetId = 'WinDirStat.WinDirStat' }
-            $WinDirStat.add_Click({
-                    Install-Application -AppID $this.Tag.WingetId
-                })
+            $WinDirStat.add_Click($InstallWingetApp)
             #endRegion
 
             #region Scripts
@@ -3421,7 +3384,8 @@ $Systray_Tool_Icon.Add_Click({
                     Start-Process @startParams
                 })
 
-            $SimpleHelpSpyDetection = Add-SubMenuItem -ParentMenuItem $ScriptsMenu -Text "SimpleHelp Spy Detection"
+            # Icon taken from the SimpleHelp Technician launcher (embedded so it shows without SimpleHelp installed).
+            $SimpleHelpSpyDetection = Add-SubMenuItem -ParentMenuItem $ScriptsMenu -Text "SimpleHelp Spy Detection" -IconBase64 'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAVSSURBVEhLnZR5TJNnHMffzWWL0X9clpnscCAwFxdYyBY3Z0AQdAo4xVsHilbmEBQFdHYeTESKFzhFiQwLtBxScFiw5bKAhVrK4Yoc4gDHwNKLlkIvSqHf5e3mIq+IZt/kyfvP83w+v/c5fgTxCll6TfaOF1O12TtzcLvrodKNH22+vM0xOO1j6rz/Fd8s2Tyv6wNHvdLlWd4ZqlafLNVD9+OCi47b0zlOIayvqfNfnNjY1wMyFD6r2codftkqT99c9XvLWfp3fZjyzZ5ZT9zJKXPPSWf5ZilSAvKGpK6H+BccQ1g1zqGZTlTUlFmXqzq2nqM1r85RTaxkKU1+bKXGP1vRH8BW3F2Tqzi7NkcZsemG3HsNW+GzNk/dHpijyP8kLL/aeQ/nFyrruZDVbslXdQXzxhBzx4CkhjGcEo3i6F0zou8YEV5uxm6+GUElJqzLU+vX5amGd3J1hqiCrvZP93E1zuHFJ94PLVo/N6jgS2Jp9RtUPuGfo3LZ8dtgT3CxCanNZnQMAfUKoFZmQ1W/DeW9E7jdM46iLis4jyaQ0TqGwwIjGHUG+J+5h0XHhViVKLR4nBTK3WLKE4mNnBmTBEtTlLO/L9Y2/VBpRVK9EQ1KoFEFNP77bVIBzWrgPjkGAekgcKnBhFNCPfYwW+HLqEdV3wQkGmBnmnTkrW8yHCYJyITzhnhRNRM4c8+IWhnsEvIvphqkkNM5hnMSM6ILHsP9aC343RZ0GoEjhd1j8/bzfah8IrJs+Aq9xgKGyGSvhqycCn46SLmgbwKJYhNO8GRYHCdBqkiDthEgnt837npEuJXKJw6WDUWfqDEgQWRG5V8vF9QO2JDcYAZDoIbXmRbElSnQNgxcuqvCF3FNkVQ+cbB8KDChzjCWKLag9M9x+zZQwc8KRAM2pN63ILlWC9+kDsRwB+yCrPt6LGa0J1D5RBhX63ZebDJcbBpHcff4tGcgIQVyG9JbLLhSr8OKy13Yd1OOVh1Q9MgKj/OdTCqfoJXp3j5dp5cnN4+D02mFhARNAX9WcJ0UiIftgoibcjwYAgQywPNs620qn9iQ3zfzWNWImCEZty8Uv0wwYMM1qQVJtVosu9CO6KIBPNACtWrA72JbHUEQr002cDgzYiqGs38WWZEsMdkBL9om+yHLbEhpHkV8pQpLGL/jZKkCLVpApAK2prVLCf+cOZMF5FvgD8XRhVbE1ujtgOkE1f02JDeO4qfifrgfFyP1ngYdI0DLCBCa2dHz5m7e8+2cxtXuOFBtRVTFMCp6J14oIK8wt8uK8/Um7M/9A250IfhdZpQ8MiGxWgufRMnjOWFlH1L5xLYbau9QngFhPB0KO8emfAtk+2jRAJmtFiQIddh0uQmudCG2pj2EV0IDFkRVGZwjy0/Hxsa+TuUTG/L1rtsKBzW7SkaQLh397y2Qh0r2IrIHkWdDNr54kQkMgRKf0wVYcKDU4LC3WOKwlxvvSCtw20htdk8TyB78YH2+WrqlyIBzYiOkmn8aHCm41WXFleZR0KuMCLo1jB8FekSw2+C095ZmQQQ35KsN+TOpvOeynCWdtZqt5K+5OYroMh14PeSNMiKywoDgklH4ZauwMlNhCMjT9AZldqa5RRbBZU/BVSpn2qzIGEj4tmgCAXk6BBbo4V9ogTdTbvJlqctX5WoOBxQYw71Te+gOO9mi+TT2w4U0ljOVMW080nodvZmyQq8M1aBnulzqyZQnLWI0HnSmsZa7RN72dKNXJrrQWM1Ou7K659MyllDXv1IWpihnL0nt/8yD+eTpVZsxL+jqMqcQJsPxu2scl12ZZ5yCfn2lyv8Gk0O2u4kFY0sAAAAASUVORK5CYII='
             $SimpleHelpSpyDetection.add_Click({ Show-SimpleHelpSpyDetection })
             #endregion
 
@@ -3431,121 +3395,69 @@ $Systray_Tool_Icon.Add_Click({
             $Sandbox = Add-SubMenuItem -ParentMenuItem $SandboxMenu -Text "Windows Sandbox" -IconBase64 $SandboxIcon
             Add-ShellContextMenuHandler -MenuItem $Sandbox -FilePath "C:\Windows\System32\WindowsSandbox.exe"
             $Sandbox.add_Click({
-                    $Filename = "C:\Windows\System32\WindowsSandbox.exe"
-                    If (Test-Path -Path $FileName) {
-                        Start-Process $FileName
-                    }
-                    else {
-                        $Continue = [System.Windows.MessageBox]::Show("Do you want to install Windows Sandbox?", "Windows Sandbox", 'YesNo', 'Warning')
-                        if ($Continue -eq 'Yes') {
-                            $startParams = @{
-                                FilePath     = 'powershell.exe'
-                                ArgumentList = '-NoExit', '-Command', 'Enable-WindowsOptionalFeature', '-FeatureName "Containers-DisposableClientVM"', '-All', '-Online'
-                                PassThru     = $true
-                            }
-                            Start-Process @startParams -Verb Runas
-                        }
-                    }
+                    if (Test-WindowsSandbox) { Start-Process "$env:SystemRoot\System32\WindowsSandbox.exe" }
                 })
 
             $WSProxy = Add-SubMenuItem -ParentMenuItem $SandboxMenu -Text "Windows Sandbox Proxy" -IconBase64 $SandboxIcon
             $WSProxy.add_Click({
-                    [void] [System.Reflection.Assembly]::LoadWithPartialName("PresentationFramework")
+                    if (-not (Test-WindowsSandbox)) { return }
 
-                    function Proxy {
-                        #Create Directory if not there
-                        $Directory = "C:\Install\SandboxScripts"
-                        If (-Not(Test-Path -Path $Directory)) {     
-                            New-Item -Path "C:\Install" -Name "SandboxScripts" -ItemType "directory"
-                        }
+                    # C:\Install\SandboxScripts is mapped into the sandbox's Downloads. Both files are
+                    # written once and reused.
+                    $Directory = 'C:\Install\SandboxScripts'
+                    if (-not (Test-Path -LiteralPath $Directory)) { New-Item -Path $Directory -ItemType Directory -Force | Out-Null }
 
-                        #Create Get-CCProxy.ps1
-                        $Script = "$Directory\Get-CCProxy.ps1"
-                        $TestScriptPath = Test-Path $Script
-                        if (!($TestScriptPath)) {
-                            "####Download File####"                                                                     | Out-File -FilePath $Script -Append
-                            "`$ProgressPreference = 'SilentlyContinue'"                                                 | Out-File -FilePath $Script -Append
-                            "`$Filename = `"ccproxysetup.exe`""                                                         | Out-File -FilePath $Script -Append
-                            "`$WebClient = New-Object System.Net.WebClient"                                             | Out-File -FilePath $Script -Append
-                            "`$URL = 'https://update.youngzsoft.com/ccproxy/update/ccproxysetup.exe'"                   | Out-File -FilePath $Script -Append
-                            "`$File = `"`$env:TEMP\`$Filename`""                                                        | Out-File -FilePath $Script -Append
-                            ""                                                                                          | Out-File -FilePath $Script -Append
-                            "#Download File"                                                                            | Out-File -FilePath $Script -Append
-                            "`$WebClient.DownloadFile(`$URL, `$File)"                                                   | Out-File -FilePath $Script -Append
-                            ""                                                                                          | Out-File -FilePath $Script -Append
-                            "#Install File"                                                                             | Out-File -FilePath $Script -Append
-                            "`$startParams = @{"                                                                        | Out-File -FilePath $Script -Append
-                            "FilePath     = `"`$env:TEMP\`$Filename`""                                                  | Out-File -FilePath $Script -Append
-                            "ArgumentList = '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-'"                   | Out-File -FilePath $Script -Append
-                            "Wait         = `$true"                                                                     | Out-File -FilePath $Script -Append
-                            "PassThru     = `$true"                                                                     | Out-File -FilePath $Script -Append
-                            "}"                                                                                         | Out-File -FilePath $Script -Append
-                            "Start-Process @startParams"                                                                | Out-File -FilePath $Script -Append
-                            ""                                                                                          | Out-File -FilePath $Script -Append
-                            "#Get Sandbox IP Address"                                                                   | Out-File -FilePath $Script -Append
-                            "(Get-NetIPAddress | Where-Object IPAddress -Like `"172.31.*`").IPAddress | Set-Clipboard"  | Out-File -FilePath $Script -Append
-                        }
-
-                        #Create Proxy.wsb
-                        $WSB = "$Directory\Proxy.wsb"
-                        $TestWSBPath = Test-Path $WSB
-                        if (!($TestWSBPath)) {
-                            "<Configuration>"                                                                                                                           | Out-File -FilePath $WSB -Append
-                            "  <vGpu>Disable</vGpu>"                                                                                                                    | Out-File -FilePath $WSB -Append
-                            "  <MemoryInMB>2048</MemoryInMB>"                                                                                                           | Out-File -FilePath $WSB -Append
-                            "  <MappedFolders>"                                                                                                                         | Out-File -FilePath $WSB -Append
-                            "    <MappedFolder>"                                                                                                                        | Out-File -FilePath $WSB -Append
-                            "      <HostFolder>C:\Install\SandboxScripts</HostFolder>"                                                                                  | Out-File -FilePath $WSB -Append
-                            "      <SandboxFolder>C:\Users\WDAGUtilityAccount\Downloads</SandboxFolder>"                                                                | Out-File -FilePath $WSB -Append
-                            "      <ReadOnly>false</ReadOnly>"                                                                                                          | Out-File -FilePath $WSB -Append
-                            "    </MappedFolder>"                                                                                                                       | Out-File -FilePath $WSB -Append
-                            "  </MappedFolders>"                                                                                                                        | Out-File -FilePath $WSB -Append
-                            "  <LogonCommand>"                                                                                                                          | Out-File -FilePath $WSB -Append
-                            "    <Command>powershell -nologo -executionpolicy bypass -noprofile -file C:\users\WDAGUtilityAccount\Downloads\Get-CCProxy.ps1</Command>"  | Out-File -FilePath $WSB -Append
-                            "  </LogonCommand>"                                                                                                                         | Out-File -FilePath $WSB -Append
-                            "</Configuration>"                                                                                                                          | Out-File -FilePath $WSB -Append
-                            Start-Process $WSB
-                        }
-                        else {
-                            Start-Process $WSB
-                        }
-
-                        # Tell the user when the sandbox puts its IP on the clipboard. Polled on a timer
-                        # (not a loop) so the menu stays usable; gives up after 10 minutes.
-                        $ProxyTimer = New-Object System.Windows.Forms.Timer
-                        $ProxyTimer.Interval = 1000
-                        $ProxyTimer.Tag = Get-Date
-                        $ProxyTimer.Add_Tick({
-                                $Status = Get-Clipboard
-                                if ($Status -like "172.*") {
-                                    $this.Stop(); $this.Dispose()
-                                    [System.Windows.MessageBox]::Show("Your proxy IP Address is: $Status`n`nIt has been copied to your clipboard.", "Proxy IP Address", 'OK', 'Information')
-                                    $StatusLoc = "$env:TEMP\$Status"
-                                    Get-Clipboard | Out-File -FilePath $StatusLoc -Append
-                                }
-                                elseif (((Get-Date) - $this.Tag).TotalMinutes -ge 10) {
-                                    $this.Stop(); $this.Dispose()
-                                }
-                            })
-                        $ProxyTimer.Start()
+                    # Runs inside the sandbox: installs CCProxy, then puts the sandbox's IP on the clipboard.
+                    $Script = Join-Path $Directory 'Get-CCProxy.ps1'
+                    if (-not (Test-Path -LiteralPath $Script)) {
+                        Set-Content -LiteralPath $Script -Encoding UTF8 -Value @'
+$ProgressPreference = 'SilentlyContinue'
+$File = "$env:TEMP\ccproxysetup.exe"
+(New-Object System.Net.WebClient).DownloadFile('https://update.youngzsoft.com/ccproxy/update/ccproxysetup.exe', $File)
+Start-Process -FilePath $File -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-' -Wait
+(Get-NetIPAddress | Where-Object IPAddress -Like "172.31.*").IPAddress | Set-Clipboard
+'@
                     }
 
-                    $Filename = "C:\Windows\System32\WindowsSandbox.exe"
-                    If (Test-Path -Path $FileName) {
-                        Proxy
+                    $WSB = Join-Path $Directory 'Proxy.wsb'
+                    if (-not (Test-Path -LiteralPath $WSB)) {
+                        Set-Content -LiteralPath $WSB -Encoding UTF8 -Value @'
+<Configuration>
+  <vGpu>Disable</vGpu>
+  <MemoryInMB>2048</MemoryInMB>
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>C:\Install\SandboxScripts</HostFolder>
+      <SandboxFolder>C:\Users\WDAGUtilityAccount\Downloads</SandboxFolder>
+      <ReadOnly>false</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+  <LogonCommand>
+    <Command>powershell -nologo -executionpolicy bypass -noprofile -file C:\users\WDAGUtilityAccount\Downloads\Get-CCProxy.ps1</Command>
+  </LogonCommand>
+</Configuration>
+'@
                     }
-                    else {
-                        $Continue = [System.Windows.MessageBox]::Show("Do you want to install Windows Sandbox?", "Windows Sandbox", 'YesNo', 'Warning')
-                        if ($Continue -eq 'Yes') {
-                            $startParams = @{
-                                FilePath     = 'powershell.exe'
-                                ArgumentList = '-NoExit', '-Command', 'Enable-WindowsOptionalFeature', '-FeatureName "Containers-DisposableClientVM"', '-All', '-Online'
-                                PassThru     = $true
+                    Start-Process $WSB
+
+                    # Tell the user when the sandbox puts its IP on the clipboard. Polled on a timer
+                    # (not a loop) so the menu stays usable; gives up after 10 minutes.
+                    $ProxyTimer = New-Object System.Windows.Forms.Timer
+                    $ProxyTimer.Interval = 1000
+                    $ProxyTimer.Tag = Get-Date
+                    $ProxyTimer.Add_Tick({
+                            $Status = Get-Clipboard
+                            if ($Status -like "172.*") {
+                                $this.Stop(); $this.Dispose()
+                                [System.Windows.MessageBox]::Show("Your proxy IP Address is: $Status`n`nIt has been copied to your clipboard.", "Proxy IP Address", 'OK', 'Information')
+                                $StatusLoc = "$env:TEMP\$Status"
+                                Get-Clipboard | Out-File -FilePath $StatusLoc -Append
                             }
-                            Start-Process @startParams -Verb Runas
-                            Proxy
-                        } 
-                    }
+                            elseif (((Get-Date) - $this.Tag).TotalMinutes -ge 10) {
+                                $this.Stop(); $this.Dispose()
+                            }
+                        })
+                    $ProxyTimer.Start()
                 })
 
             # Throwaway sandbox with a PowerShell window already open in it.
@@ -3614,8 +3526,7 @@ $Systray_Tool_Icon.Add_Click({
                         try {
                             # Check if the file is a valid image file by attempting to load it
                             $image = [System.Drawing.Image]::FromFile($filePath)
-                            # Display the image in the PictureBox
-                            $pictureBox.Image = $image
+                            Set-BuddyPicture $pictureBox $image
                         }
                         catch {
                             [System.Windows.Forms.MessageBox]::Show("Please drop a valid image file.", "Invalid File", 
@@ -3627,18 +3538,10 @@ $Systray_Tool_Icon.Add_Click({
                         # Get the text or URL from the drag data
                         $textData = $e.Data.GetData([System.Windows.Forms.DataFormats]::Text)
         
-                        # Basic check if the dragged text looks like a URL for images (including gifs)
-                        if ($textData -match "^https?://.*\.(jpg|jpeg|png)$") {
-                            # Handle regular images (jpg, png, etc.)
+                        # Basic check if the dragged text looks like an image URL (GIFs included)
+                        if ($textData -match "^https?://.*\.(jpg|jpeg|png|gif)$") {
                             $image = Get-ImageFromURL -url $textData
-                            if ($null -ne $image) {
-                                # Display the downloaded image in the PictureBox
-                                $pictureBox.Image = $image
-                            }
-                        }
-                        elseif ($textData -match "^https?://.*\.(gif)$") {
-                            # Handle GIFs explicitly
-                            Import-GifFromURL -url $textData
+                            if ($null -ne $image) { Set-BuddyPicture $pictureBox $image }
                         }
                         else {
                             [System.Windows.Forms.MessageBox]::Show("Please drop a valid image URL.", "Invalid URL", 
@@ -3682,13 +3585,19 @@ $Systray_Tool_Icon.Add_Click({
                 })
 
             [void]$form.ShowDialog()
+
+            # ShowDialog doesn't dispose the form when it closes. Free it, its menu (~100 items)
+            # and the buddy picture; the menu icons are cached and stay for the next time.
+            $BuddyMenu = $pictureBox.ContextMenuStrip
+            $BuddyImage = $pictureBox.Image
+            $form.Dispose()
+            if ($BuddyMenu) { $BuddyMenu.Dispose() }
+            if ($BuddyImage) { $BuddyImage.Dispose() }
         }
     })
 
 # Make PowerShell Disappear
-$windowcode = '[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);'
-$asyncwindow = Add-Type -MemberDefinition $windowcode -Name Win32ShowWindowAsync -Namespace Win32Functions -PassThru
-$null = $asyncwindow::ShowWindowAsync((Get-Process -PID $pid).MainWindowHandle, 0)
+[void][Win32WB.ConsoleWB]::ShowWindowAsync((Get-Process -Id $PID).MainWindowHandle, 0)
  
 # Force garbage collection just to start slightly lower RAM usage.
 [void][System.GC]::Collect()

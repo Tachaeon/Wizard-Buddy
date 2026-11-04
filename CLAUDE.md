@@ -20,7 +20,7 @@ pwsh Start-WizardBuddy.ps1
 
 | File | Purpose |
 |------|---------|
-| `Start-WizardBuddy.ps1` | **Active version (v3.7.0)** — the only script that ships; older builds moved to `Old/` on 2026-09-29 |
+| `Start-WizardBuddy.ps1` | **Active version (v3.7.1)** — the only script that ships; older builds moved to `Old/` on 2026-09-29 |
 | `Old/Start-WizardBuddy-v2.ps1` | Previous version (v2.1) |
 | `Old/Start-WizardBuddy.ps1` | Older version (v2.0) — uses deprecated `LoadWithPartialName`; kept for reference |
 | `Base Wizard/Get-Wizard.ps1` | Minimal prototype — borderless form with a PictureBox and one GIF, no tray |
@@ -29,9 +29,10 @@ pwsh Start-WizardBuddy.ps1
 ## Architecture (`Start-WizardBuddy.ps1`)
 
 ### Embedded types
-The script adds two C# types via `Add-Type -TypeDefinition`:
+Every C# type is compiled by **one** `Add-Type -TypeDefinition` near the top (Windows PowerShell runs csc.exe once per `Add-Type`, ~0.2 s each, so add new P/Invoke types to that block rather than a new `Add-Type`). It is guarded by `'Win32WB.ConsoleWB' -as [type]`, so re-running the script in the same session skips it:
 - **`User32`** — P/Invoke into `user32.dll` for `ReleaseCapture` and `SendMessage`, used to implement borderless-form dragging via the `WM_NCLBUTTONDOWN`/`HTCAPTION` trick on `PictureBox.MouseDown`
 - **`ShellContextMenu`** — P/Invoke into `shell32.dll` and `user32.dll` for native Windows right-click context menus (`IShellFolder`, `IContextMenu`, `TrackPopupMenuEx`). Triggered when right-clicking an application submenu item.
+- **`Win32WB.*`** — `DwmApiWB` (rounded corners), `UserWB` (`EnableWindow`), `TopMostWB` (`SetWindowPos`), `IconWB` (`DestroyIcon`), `ConsoleWB` (`ShowWindowAsync`, hides the console at startup).
 
 ### Form and rendering
 - The desktop companion is a borderless, always-on-top, taskbar-hidden `Form` with `BackColor = DimGray` and `TransparencyKey = BackColor`, making everything except the GIF transparent.
@@ -41,6 +42,8 @@ The script adds two C# types via `Add-Type -TypeDefinition`:
 
 ### Asset embedding
 All buddy GIFs and menu icons are stored as Base64 strings in the script body. `Get-IconFromBase64` decodes them to `System.Drawing.Image`. To add a new buddy or icon, convert the file to Base64 and add the string as a variable.
+- **Menu icons go through `Get-MenuImage`** (used by `Add-MenuItem` / `Add-SubMenuItem`), which caches each decoded image in `$MenuImageCache` (keyed by the Base64 text, or `file:<path>` for `ExtractAssociatedIcon`). Cached images are shared between menu builds, so **never dispose a menu item's `.Image`**; disposing the menu itself leaves item images alone (checked in 5.1 and 7).
+- **Buddy pictures and the tray icon must stay uncached** (`Get-IconFromBase64` directly): the PictureBox animates its image and `Set-TrayIcon` disposes its copy. Swap the buddy picture with `Set-BuddyPicture`, which disposes the old one.
 
 ### Tray and menus
 - `NotifyIcon` (`$Systray_Tool_Icon`) lives in the system tray with a `ContextMenuStrip`.
@@ -53,15 +56,16 @@ All buddy GIFs and menu icons are stored as Base64 strings in the script body. `
 
 | Function | Purpose |
 |----------|---------|
-| `Toast` | Shows a Windows toast notification using `Windows.UI.Notifications` WinRT APIs; registers a custom app ID in the registry so toasts are attributable |
-| `Install-Application` | Calls `winget install` silently; calls `WingetCheck` first |
+| `Toast` | Shows a Windows toast notification using `Windows.UI.Notifications` WinRT APIs. The hero GIF is downloaded once to `%TEMP%\WizardBuddy\ToastHero.gif` and the app ID registered once per session (`$script:ToastAppRegistered`); PowerShell 7 can't load WinRT that way, so it falls back to `Show-TrayNotice` |
+| `Install-Application` | Calls `winget install` silently; calls `WingetCheck` first. The winget Installs items share one handler (`$InstallWingetApp`) that reads `WingetId` / `PostInstallPath` from the item's `.Tag` |
+| `Install-WindowsCapability` | RSAT installs (Active Directory, Group Policy, RSAT Tools): an elevated console running `Add-WindowsCapability`, waited on in the background; `-InstalledPath` tells success from failure |
 | `WingetCheck` | Bootstraps winget by downloading the MSIX bundle if `winget.exe` is missing |
 | `ClickPaste` | Downloads, extracts, and launches ClickPaste; attempts to pin it to the system tray via registry |
-| `Load-GifFromURL` | Downloads a GIF from a URL and sets `$pictureBox.Image` directly from a MemoryStream |
+| `Get-ImageFromURL` | Downloads an image (GIFs included) from a URL into an `Image`; `$null` plus a message box on failure |
 | `Set-FormBottomRight` | Positions the form in the bottom-right corner of a given screen's working area |
 
 ### Drag-and-drop
-The form has `AllowDrop = $true`. `DragEnter` sets the effect to `Copy`. `DragDrop` accepts either a file path (`.gif` only) or a URL string, and replaces the current buddy GIF. URLs go through `Load-GifFromURL`; file paths load the `.gif` directly from disk.
+The form has `AllowDrop = $true`. `DragEnter` sets the effect to `Copy`. `DragDrop` accepts either a file path (`.gif` only) or a URL string, and replaces the current buddy GIF. URLs (jpg/jpeg/png/gif) go through `Get-ImageFromURL`; file paths load directly from disk. Both swap in through `Set-BuddyPicture`.
 
 ### `#region` structure
 The script body is organized into regions: `Functions` → base64 icon variables → tray setup → `Buddies` → `Applications` → `Customize Windows` → `Installs` → `Scripts` → `Handlers` (drag-drop, tray events) → `Application.Run`.
@@ -137,3 +141,12 @@ The helpers are copied from `C:\Projects\Combat-Hounds\Combat-Hounds.ps1`, so a 
 ### v3.7.0 (2026-11-04) - Animate Tray Icon, Help window
 - **Animate Tray Icon** (tray right-click, after Start with Windows; saved as `AnimateTrayIcon` = `True`/`False` in `HKCU:\Software\WizardBuddy`, parsed with `[bool]::TryParse`). `Set-TrayIcon` now keeps `$script:TrayFrames` (`Handle`, `Icon`, `Delay`) and `$script:TrayIconBase64`. When the setting is on, every GIF frame is drawn by `New-TrayIconHandle` (the old 64x64 square-fit code) with its delay from property `0x5100` (hundredths of a second, floored at 100 ms); otherwise just frame 0. The WinForms `$TrayAnimationTimer` steps through the frames and sets its own `Interval` per frame. `Set-TrayIcon` stops the timer, swaps in the new set, then `DestroyIcon`s the old handles. Toggling re-runs `Set-TrayIcon $script:TrayIconBase64`. Exit is `Stop-Process`, so handles aren't freed explicitly there.
 - **Help window** replaces the `MessageBox`: `Show-WizardBuddyHelp` (its own `#region Help`, before Scroll Jiggler) builds a `New-OpsHubWindow` from `$HelpSections`, an ordered table of section name -> rows of `@(key, description)`, escaped with `SecurityElement.Escape`. It opens modeless through `Show-ToolWindow 'Help'`. The ScrollViewer (MaxHeight 520) has a local thin dark `ScrollBar` style. **When you add or change a menu item or gesture, update `$HelpSections` too.**
+
+### v3.7.1 (2026-11-04) - optimization pass
+- **Startup**: the 7 separate `Add-Type` compiles are one (see Embedded types). Measured to tray-ready, median of 4: Windows PowerShell 3.16 s -> 1.80 s, PowerShell 7 2.03 s -> 1.88 s.
+- **Buddy show/hide no longer leaks**: the form, buddy menu and picture are built on every tray left-click and shown with `ShowDialog`, which doesn't dispose on close. After `ShowDialog` returns, the handler now disposes the form, `$pictureBox.ContextMenuStrip` and the buddy image. Menu icons come from the `Get-MenuImage` cache, so a rebuild no longer re-decodes ~2.2 MB of Base64 (all 15 buddy GIFs included) or re-extracts file icons. Buddy picture swaps (Buddies menu, drag-drop) dispose the old image (`Set-BuddyPicture`); the computer-info submenu disposes its old rows.
+- **Computer-name click**: `Toast` no longer downloads its GIF on the UI thread every time (~1.4 s per click before; now cached, ~6 ms). Unused `Set_Action` and undefined `$Attribution` / `$Actions` removed. PowerShell 7 gets a tray balloon instead of an error.
+- **RSAT installs** (Active Directory, Group Policy, RSAT Tools) ran `Add-WindowsCapability` on the UI thread (buddy frozen for minutes, and a "has been installed" box even when it failed without admin). Now `Install-WindowsCapability`: elevated console, background wait, real success check.
+- **Bug fixes**: Applications > PowerShell 7 ran `Test-Path` and then tested the path *string*, so the install branch never ran; it now offers the winget install. `Get-AndroidAvdConfigPath` broke on a one-line `.ini` (`-match` on a scalar returns a bool); wrapped in `@()`. A stray `3` was written to stdout by the tray separator's `Items.Add`.
+- **Scripts > SimpleHelp Spy Detection** now has an icon: the SimpleHelp Technician launcher's icon (`%APPDATA%\JWrapper-SimpleHelp Technician\SimpleHelp TechnicianWinLauncher.exe`), resized to 24x24 PNG and embedded as Base64 so it shows on PCs without SimpleHelp.
+- **Smaller**: `New-RandomPassword` uses `RandomNumberGenerator` (crypto) instead of `Get-Random` per character; Android device menus read `config.ini` once (`Get-AndroidDeviceConfig`, replaces `Get-AndroidDeviceSetting`); `WingetCheck` only creates `C:\Install` when it actually downloads; Windows Sandbox / Sandbox Proxy reuse `Test-WindowsSandbox` (the proxy no longer starts a sandbox that was only just being installed) and write their files from here-strings instead of ~35 `Out-File -Append` calls; `Import-GifFromURL` folded into `Get-ImageFromURL`; unused `Restart-Explorer` removed.
