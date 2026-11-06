@@ -8,7 +8,7 @@
 -  **Left-click** → Shows Wizard-Buddy on the desktop.
 
 ![Wizard Left Click](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardLeftClickTray.png)
--  **Right-click** → Opens context menus, **Help**, **Start with Windows**, **Animate Tray Icon** and Exit.
+-  **Right-click** → Opens context menus, **Help**, **SimpleHelp Spy Detection**, **Start with Windows**, **Animate Tray Icon** and Exit.
 - **Help** opens a window that explains every click, scroll and menu.
 - The tray icon shows whichever buddy you picked. Turn on **Animate Tray Icon** (tray right-click) to have it play its animation there too. You'll only see it if the icon is pinned to the taskbar rather than tucked under the ^ arrow.
 - **Start with Windows** (tray right-click) starts Wizard Buddy when you sign in. A check shows it's on; click again to turn it off. It starts the same way you ran it this time: from the script file, or from GitHub if you used the `irm | iex` launcher.
@@ -65,7 +65,7 @@
 - Networking and utility scripts:
 - Speed Test
 - Ping Google
-- SimpleHelp Spy Detection — watches for extra Remote Access processes, chimes and logs the time
+- SimpleHelp Spy Detection — **always on from the moment Wizard Buddy starts**. When someone connects to your PC through SimpleHelp (a **new** `Remote Access Session` process appears), it chimes once, logs the time and process ID, and turns your buddy (and the tray icon) into a penguin 🐧. The window (here, or tray right-click › **SimpleHelp Spy Detection**) shows the log and lets you **Clear Alert**, **Open Log**, **Delete Log** or Stop/Start the watcher for this session. Picking a buddy also clears the penguin. A session that was already running when Wizard Buddy started (one can linger after a technician disconnects) is ignored.
 - (Extensible: more PowerShell or batch scripts can be added)
 
 ### 6. Windows Sandbox
