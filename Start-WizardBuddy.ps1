@@ -2,7 +2,7 @@
 CreateObject("Wscript.Shell").Run "powershell -NoProfile -ExecutionPolicy Bypass -Command ""irm https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/main/Start-WizardBuddy.ps1 | iex""", 0, False
 #>
 
-#Version = "3.8.0"
+#Version = "3.8.1"
 
 <#
 === Wizard Buddy v2 - Features ===
@@ -118,8 +118,10 @@ Add-Type -AssemblyName WindowsFormsIntegration
 
 # All P/Invoke types in one compile: Windows PowerShell runs csc.exe for every Add-Type, about
 # 0.2 s each. Skipped when this session already has them (the script was re-run).
+# The compiled types are cached as a DLL (see below the source), because compiling in-process
+# costs PowerShell 7 ~65 MB of working set for as long as the buddy runs.
 if (-not ('Win32WB.ConsoleWB' -as [type])) {
-Add-Type -TypeDefinition @'
+$NativeSource = @'
 using System;
 using System.Runtime.InteropServices;
 
@@ -298,8 +300,59 @@ namespace Win32WB
         [DllImport("user32.dll")]
         public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
     }
+
+    // Trims the working set when Wizard Buddy goes idle (Optimize-BuddyMemory).
+    public static class MemoryWB
+    {
+        [DllImport("psapi.dll")]
+        public static extern bool EmptyWorkingSet(IntPtr hProcess);
+    }
 }
 '@
+    # PowerShell 7 compiles Add-Type with Roslyn inside this process, which costs ~65 MB of working
+    # set (~35 MB private) that is never given back. So the types are compiled once, by a separate
+    # hidden PowerShell, into %LOCALAPPDATA%\WizardBuddy\WizardBuddyNative-<edition>-<version>-<hash>.dll,
+    # and loaded with Assembly.LoadFrom. Add-Type -Path would not help: it sets up the compiler too.
+    # The hash covers the C# source, so editing it builds a new DLL; the edition and version are in
+    # the name because a DLL built against one .NET may not load in another. When elevated, the
+    # cache is skipped: a non-admin process could plant a DLL there for the admin one to load.
+    # Any failure falls back to the in-process Add-Type.
+    $NativeLoaded = $false
+    $IsElevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $IsElevated) {
+        try {
+            $Sha = [System.Security.Cryptography.SHA256]::Create()
+            $Hash = -join ($Sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($NativeSource))[0..5] | ForEach-Object { $_.ToString('x2') })
+            $Sha.Dispose()
+            $NativeDir = Join-Path $env:LOCALAPPDATA 'WizardBuddy'
+            $NativePrefix = 'WizardBuddyNative-{0}-{1}.{2}-' -f $PSVersionTable.PSEdition, $PSVersionTable.PSVersion.Major, $PSVersionTable.PSVersion.Minor
+            $NativeDll = Join-Path $NativeDir "$NativePrefix$Hash.dll"
+            if (-not (Test-Path -LiteralPath $NativeDll)) {
+                [void](New-Item -ItemType Directory -Path $NativeDir -Force)
+                # Older builds for this edition; ones still loaded by a running buddy stay locked and are skipped.
+                Get-ChildItem -LiteralPath $NativeDir -Filter "$NativePrefix*.dll" -ErrorAction SilentlyContinue |
+                    Remove-Item -Force -ErrorAction SilentlyContinue
+                $SourceFile = Join-Path $NativeDir "$NativePrefix$Hash.cs"
+                [System.IO.File]::WriteAllText($SourceFile, $NativeSource)
+                $Build = "Add-Type -TypeDefinition ([IO.File]::ReadAllText('$SourceFile')) -OutputAssembly '$NativeDll' -OutputType Library"
+                $Encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($Build))
+                Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList '-NoProfile', '-NonInteractive', '-EncodedCommand', $Encoded `
+                    -WindowStyle Hidden -Wait
+                Remove-Item -LiteralPath $SourceFile -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path -LiteralPath $NativeDll) {
+                [void][System.Reflection.Assembly]::LoadFrom($NativeDll)
+                $NativeLoaded = [bool]('Win32WB.MemoryWB' -as [type])
+            }
+        }
+        catch {
+            # A half-written or corrupt DLL would fail every start; drop it so the next start rebuilds it.
+            $NativeLoaded = $false
+            if ($NativeDll) { Remove-Item -LiteralPath $NativeDll -Force -ErrorAction SilentlyContinue }
+        }
+    }
+    if (-not $NativeLoaded) { Add-Type -TypeDefinition $NativeSource }
 }
 
 #region Functions
@@ -1433,7 +1486,10 @@ $BackgroundTimer.add_Tick({
                 catch { [System.Windows.Forms.MessageBox]::Show("$($Task.Name): $($_.Exception.Message)", 'Wizard Buddy', 'OK', 'Error') | Out-Null }
             }
         }
-        if ($BackgroundTasks.Count -eq 0) { $BackgroundTimer.Stop() }
+        if ($BackgroundTasks.Count -eq 0) {
+            $BackgroundTimer.Stop()
+            Request-MemoryTrim
+        }
     })
 
 # Returns $true if the task started, $false if a task with the same name is already running.
@@ -1476,6 +1532,36 @@ function Start-BackgroundTask {
     return $true
 }
 #endregion Background tasks
+
+#region Memory
+# Wizard Buddy spends nearly all its time idle in the tray, but .NET keeps the memory used by the
+# last buddy menu, tool window or background runspace. When it goes idle (buddy hidden, tool
+# window closed, background tasks done, startup finished), Request-MemoryTrim waits 3 seconds
+# (so quick open/close bursts trim once) and Optimize-BuddyMemory then runs a full GC with a
+# one-off large-object-heap compaction (the Base64 decodes land there and fragment it) and
+# hands the idle pages back to Windows with EmptyWorkingSet. Pages that are needed again are
+# faulted back in, so the first menu open afterwards can take a few milliseconds longer.
+$MemoryTrimTimer = [System.Windows.Forms.Timer]::new()
+$MemoryTrimTimer.Interval = 3000
+$MemoryTrimTimer.add_Tick({
+        $MemoryTrimTimer.Stop()
+        Optimize-BuddyMemory
+    })
+
+function Optimize-BuddyMemory {
+    [System.Runtime.GCSettings]::LargeObjectHeapCompactionMode = [System.Runtime.GCLargeObjectHeapCompactionMode]::CompactOnce
+    [System.GC]::Collect()
+    [System.GC]::WaitForPendingFinalizers()
+    [System.GC]::Collect()
+    # -1 is the current-process pseudo handle.
+    [void][Win32WB.MemoryWB]::EmptyWorkingSet([IntPtr]::new(-1))
+}
+
+function Request-MemoryTrim {
+    $MemoryTrimTimer.Stop()
+    $MemoryTrimTimer.Start()
+}
+#endregion Memory
 
 # Builds a borderless OpsHub-style window around $BodyXaml: Tokyo Night palette, badge + title
 # bar with minimize/close, drag to move, DWM rounded corners. $BodyXaml can use the palette
@@ -1725,7 +1811,10 @@ function Show-ToolWindow {
     $UI.ToolName = $Name
     $UI.Window.Tag = $UI
     $ToolWindows[$Name] = $UI.Window
-    $UI.Window.Add_Closed({ $ToolWindows.Remove($this.Tag.ToolName) })
+    $UI.Window.Add_Closed({
+            $ToolWindows.Remove($this.Tag.ToolName)
+            Request-MemoryTrim
+        })
     # Without this, a WPF window shown modeless under the WinForms message loop gets no keystrokes.
     [System.Windows.Forms.Integration.ElementHost]::EnableModelessKeyboardInterop($UI.Window)
     $UI.Window.Show()
@@ -3679,14 +3768,15 @@ Start-Process -FilePath $File -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', 
             $form.Dispose()
             if ($BuddyMenu) { $BuddyMenu.Dispose() }
             if ($BuddyImage) { $BuddyImage.Dispose() }
+            Request-MemoryTrim
         }
     })
 
 # Make PowerShell Disappear
 [void][Win32WB.ConsoleWB]::ShowWindowAsync((Get-Process -Id $PID).MainWindowHandle, 0)
  
-# Force garbage collection just to start slightly lower RAM usage.
-[void][System.GC]::Collect()
+# Trim memory once startup has settled (the timer only ticks once Application.Run is going).
+Request-MemoryTrim
  
 # Create an application context for it to all run within.
 # This helps with responsiveness, especially when clicking Exit.

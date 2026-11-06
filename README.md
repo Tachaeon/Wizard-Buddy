@@ -83,6 +83,7 @@
 - **Base64 Wizard** is built in (no extra script): drop a file on it, or choose one, to copy its Base64 to the clipboard; or copy Base64 text and click **Decode Clipboard** to save the file to Downloads with the right extension.
 - Speed Test, Password Generator, Scroll Jiggler, SimpleHelp Spy Detection and Base64 Wizard all share the same dark, rounded OpsHub-style window. They open alongside the buddy instead of blocking it, so you can keep using the menu while one is open; picking one that is already open brings it to the front.
 - Installs, Group Policy Update, Ping Google and the Sandbox Proxy no longer freeze the menu while they run.
+- **Light on memory**: about 50 MB in Task Manager while it sits in the tray. It gives memory back each time you hide the buddy or close a tool window. The first start after an update builds a small helper file in `%LOCALAPPDATA%\WizardBuddy`, which makes later starts lighter.
 - **Double-click Wizard-Buddy** → opens PowerShell 7 (falls back to Windows PowerShell if 7 isn't installed). Hold **Shift** while double-clicking to run it as Administrator.
 - **Middle-click Wizard-Buddy** → opens whatever web address is on your clipboard in your default browser. A bare host like `google.com` is treated as `https://google.com`; anything that isn't an http/https address is ignored with a tray notice.
 - Click and drag any .gif onto Wizard-Buddy to change it to that .gif! Even works from web browsers. (File has to be .gif)
