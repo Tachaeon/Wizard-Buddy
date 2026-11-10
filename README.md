@@ -8,7 +8,8 @@
 -  **Left-click** → Shows Wizard-Buddy on the desktop.
 
 ![Wizard Left Click](https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/refs/heads/main/Images/WizardLeftClickTray.png)
--  **Right-click** → Opens context menus, **Help**, **SimpleHelp Spy Detection**, **Start with Windows**, **Animate Tray Icon** and Exit.
+-  **Right-click** → Opens context menus, **Help**, **SimpleHelp Spy Detection**, **Start with Windows**, **Animate Tray Icon**, **Shake to Find Pointer** and Exit.
+- **Shake to Find Pointer** (on by default): lost the pointer? Shake the mouse quickly back and forth and it grows for a moment, like on a Mac, then shrinks back when you stop. It keeps your own pointer style, size and color. It doesn't trigger while a mouse button is held (dragging or selecting) or while a full-screen game, video or presentation is running. Tray right-click › **Shake to Find Pointer** turns it off or on.
 - **Help** opens a window that explains every click, scroll and menu.
 - The tray icon shows whichever buddy you picked. Turn on **Animate Tray Icon** (tray right-click) to have it play its animation there too. You'll only see it if the icon is pinned to the taskbar rather than tucked under the ^ arrow.
 - **Start with Windows** (tray right-click) starts Wizard Buddy when you sign in. A check shows it's on; click again to turn it off. It starts the same way you ran it this time: from the script file, or from GitHub if you used the `irm | iex` launcher.

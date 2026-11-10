@@ -2,7 +2,7 @@
 CreateObject("Wscript.Shell").Run "powershell -NoProfile -ExecutionPolicy Bypass -Command ""irm https://raw.githubusercontent.com/Tachaeon/Wizard-Buddy/main/Start-WizardBuddy.ps1 | iex""", 0, False
 #>
 
-#Version = "3.8.1"
+#Version = "3.10.0"
 
 <#
 === Wizard Buddy v2 - Features ===
@@ -56,7 +56,8 @@ WINDOWS SANDBOX
   - Windows Sandbox Proxy   - CC Proxy inside Windows Sandbox
   - PowerShell in Sandbox   - Throwaway sandbox that logs on with PowerShell open
   - Clipboard Website in Sandbox - Throwaway sandbox that browses to the web address
-                              on your clipboard (http/https only)
+                              on your clipboard (http/https only), with uBlock Origin
+                              Lite installed in Edge first
 
 CUSTOMIZE WINDOWS (Registry-Based Tweaks - toggles: a check marks applied tweaks, click again to undo;
                    settings that need admin offer to retry as administrator)
@@ -95,6 +96,8 @@ TRAY & SETTINGS
                               plays its GIF there too
   - Remembered              - Buddy, size, opacity and position (HKCU:\Software\WizardBuddy)
   - Start with Windows      - Tray right-click toggle (HKCU Run key + a .vbs launcher)
+  - Shake to Find Pointer   - Shake the mouse and the pointer grows for a moment (like macOS);
+                              tray right-click toggle, on by default
   - Computer name menu      - Click copies the name; hover to copy IP address, user, serial
                               number, model, OS, join state or uptime (or all of them)
 
@@ -124,6 +127,7 @@ if (-not ('Win32WB.ConsoleWB' -as [type])) {
 $NativeSource = @'
 using System;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 public static class ShellContextMenu
 {
@@ -306,6 +310,258 @@ namespace Win32WB
     {
         [DllImport("psapi.dll")]
         public static extern bool EmptyWorkingSet(IntPtr hProcess);
+    }
+
+    // Shake to Find Pointer (like macOS): a background thread polls the cursor position every
+    // 15 ms while it moves (50 ms while it's still; ~0.1% of one core). A vigorous back-and-forth shake grows the arrow, I-beam and hand cursors to 8x the
+    // user's pointer size (max 384 px); they shrink back gently ~0.7 s after the shake stops. Detection
+    // follows PowerToys Find My Mouse: within the last 600 ms the path travelled must be long
+    // and much longer than the diagonal of the box it stayed in (i.e. it went back and forth).
+    // Runs entirely in C#, so no PowerShell code is on the mouse path.
+    public static class ShakeWB
+    {
+        [StructLayout(LayoutKind.Sequential)] struct POINT { public int X; public int Y; }
+        [StructLayout(LayoutKind.Sequential)] struct CURSORINFO { public int cbSize; public int flags; public IntPtr hCursor; public POINT pt; }
+        struct Sample { public int T; public int X; public int Y; }
+
+        [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT p);
+        [DllImport("user32.dll")] static extern bool GetCursorInfo(ref CURSORINFO ci);
+        [DllImport("user32.dll")] static extern IntPtr LoadCursor(IntPtr hinst, IntPtr id);
+        [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vKey);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr LoadImage(IntPtr hinst, string name, uint type, int cx, int cy, uint load);
+        [DllImport("user32.dll")] static extern bool DestroyCursor(IntPtr h);
+        [DllImport("user32.dll")] static extern bool SetSystemCursor(IntPtr h, uint id);
+        [DllImport("user32.dll")] static extern bool SystemParametersInfo(uint action, uint param, IntPtr pv, uint winIni);
+        [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
+        [DllImport("user32.dll")] static extern uint GetDpiForSystem();
+        [DllImport("shell32.dll")] static extern int SHQueryUserNotificationState(out int state);
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, EntryPoint = "RegGetValueW")]
+        static extern int RegGetString(IntPtr hkey, string subKey, string value, uint flags, IntPtr type, System.Text.StringBuilder data, ref uint size);
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, EntryPoint = "RegGetValueW")]
+        static extern int RegGetDword(IntPtr hkey, string subKey, string value, uint flags, IntPtr type, out int data, ref uint size);
+
+        static readonly IntPtr HKCU = new IntPtr(unchecked((int)0x80000001));
+        const string CursorsKey = @"Control Panel\Cursors";
+        // OCR_NORMAL, OCR_IBEAM, OCR_HAND and their registry value names.
+        static readonly uint[] CursorIds = { 32512, 32513, 32649 };
+        static readonly string[] CursorNames = { "Arrow", "IBeam", "Hand" };
+        static readonly string[] CursorFallbacks = { "aero_arrow.cur", null, "aero_link.cur" };
+
+        // The pointer's size follows the clock, frame by frame: it grows over GrowMs while shaking, holds
+        // for HoldMs after the shake stops, then shrinks over ShrinkMs, easing in (slow at first, where
+        // big frames are expensive, faster at small sizes, where they're cheap). While it animates, the
+        // thread polls every FramePollMs with the system timer at 1 ms (timeBeginPeriod), else at 15.6 ms.
+        const int PollMs = 15, IdlePollMs = 50, FramePollMs = 4, WindowMs = 600, GrowMs = 150, HoldMs = 700, ShrinkMs = 600, SizeStep = 2;
+        const int GrowFactor = 8, MaxSize = 384;   // past Windows' own 256 px slider max; LoadImage/SetSystemCursor accept it (384 measured)
+        const double MinTravel = 1000, MinRatio = 4.0;   // travel in 96-DPI pixels; ratio = travel / box diagonal
+
+        [DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint ms);
+        [DllImport("winmm.dll")] static extern uint timeEndPeriod(uint ms);
+
+        static readonly object Gate = new object();
+        static Thread worker;
+        static volatile bool running;
+        static bool enlarged, fineTimer;
+        static string[] paths = new string[3];
+        static int[] applied = new int[3];   // size each cursor was last set to (0 = the user's own)
+        static int baseSize;
+
+        public static bool IsRunning { get { return running; } }
+
+        public static void Start()
+        {
+            lock (Gate)
+            {
+                if (running) return;
+                running = true;
+                worker = new Thread(Run);
+                worker.IsBackground = true;
+                worker.Name = "WizardBuddy shake";
+                worker.Start();
+            }
+        }
+
+        // Stops watching; the thread restores the cursors on its way out if they are big.
+        public static void Stop()
+        {
+            Thread t;
+            lock (Gate)
+            {
+                if (!running) return;
+                running = false;
+                t = worker;
+                worker = null;
+            }
+            if (t != null) t.Join(2000);
+        }
+
+        // Reloads every system cursor from the registry: the user's scheme, size and colour.
+        public static void Restore() { SystemParametersInfo(0x57, 0, IntPtr.Zero, 0); }
+
+        static void Run()
+        {
+            var history = new System.Collections.Generic.List<Sample>();
+            double scale = 1.0;
+            try { scale = GetDpiForSystem() / 96.0; } catch (EntryPointNotFoundException) { }
+            var clock = System.Diagnostics.Stopwatch.StartNew();   // ms precision, unlike TickCount's 15.6 ms
+            int lastShake = 0, lastPass = 0, sleepMs = PollMs;
+            double grown = 0, peak = 0;   // 0 = normal size, 1 = full size; peak = where the shrink starts from
+            POINT last = new POINT();
+            try
+            {
+                while (running)
+                {
+                    Thread.Sleep(sleepMs);
+                    int now = (int)clock.ElapsedMilliseconds;
+                    int dt = Math.Min(50, now - lastPass);
+                    lastPass = now;
+                    POINT p;
+                    if (!GetCursorPos(out p)) continue;
+                    // While the mouse sits still (and the pointer is normal size), check only
+                    // 20 times a second; poll fast again as soon as it moves.
+                    sleepMs = (p.X == last.X && p.Y == last.Y && grown == 0) ? IdlePollMs : PollMs;
+                    last = p;
+
+                    // A held button means dragging or selecting (and shaking a window by its title
+                    // bar is Windows' own Aero Shake), so it doesn't count.
+                    bool buttonDown = (GetAsyncKeyState(0x01) & 0x8000) != 0 || (GetAsyncKeyState(0x02) & 0x8000) != 0;
+                    if (buttonDown) history.Clear();
+                    else if (history.Count == 0 || history[history.Count - 1].X != p.X || history[history.Count - 1].Y != p.Y)
+                        history.Add(new Sample { T = now, X = p.X, Y = p.Y });
+                    while (history.Count > 0 && unchecked(now - history[0].T) > WindowMs) history.RemoveAt(0);
+
+                    bool shaking = false;
+                    if (history.Count > 3)
+                    {
+                        double travel = 0;
+                        int minX = history[0].X, maxX = minX, minY = history[0].Y, maxY = minY;
+                        for (int i = 1; i < history.Count; i++)
+                        {
+                            double dx = history[i].X - history[i - 1].X, dy = history[i].Y - history[i - 1].Y;
+                            travel += Math.Sqrt(dx * dx + dy * dy);
+                            minX = Math.Min(minX, history[i].X); maxX = Math.Max(maxX, history[i].X);
+                            minY = Math.Min(minY, history[i].Y); maxY = Math.Max(maxY, history[i].Y);
+                        }
+                        double w = maxX - minX, h = maxY - minY, diagonal = Math.Sqrt(w * w + h * h);
+                        shaking = travel >= MinTravel * scale && diagonal > 0 && travel / diagonal >= MinRatio;
+                    }
+
+                    if (shaking && grown == 0)
+                    {
+                        // Leave full-screen games, videos and presentations alone.
+                        if (IsFullScreenBusy() || !LoadScheme()) { history.Clear(); continue; }
+                    }
+
+                    double before = grown;
+                    bool animating = false;
+                    if (shaking)
+                    {
+                        lastShake = now;
+                        grown = Math.Min(1.0, grown + (double)dt / GrowMs);
+                        peak = grown;
+                        animating = grown < 1.0;
+                    }
+                    else if (grown > 0)
+                    {
+                        int t = now - lastShake - HoldMs;
+                        if (t > 0)
+                        {
+                            double u = (double)t / ShrinkMs;
+                            grown = u >= 1.0 ? 0 : peak * (1.0 - u * u);
+                            animating = grown > 0;
+                        }
+                    }
+
+                    if (grown == 0 && before > 0) { Restore(); enlarged = false; applied = new int[3]; }
+                    // Runs on every pass while big, so a pointer that changes shape (arrow -> I-beam over
+                    // text) is resized too; Apply does nothing when the size hasn't changed.
+                    else if (grown > 0) Apply(SizeFor(grown));
+
+                    SetFineTimer(animating);
+                    if (animating) sleepMs = FramePollMs;
+                }
+            }
+            catch { }   // An exception here would take the whole app down; just stop shaking.
+            finally
+            {
+                if (enlarged) { Restore(); enlarged = false; }
+                applied = new int[3];
+                SetFineTimer(false);
+            }
+        }
+
+        // 1 ms system timer only while the pointer is animating (about a second per shake), so
+        // Thread.Sleep isn't rounded up to 15.6 ms ticks; it costs power, so never leave it on.
+        static void SetFineTimer(bool on)
+        {
+            if (on == fineTimer) return;
+            fineTimer = on;
+            if (on) timeBeginPeriod(1); else timeEndPeriod(1);
+        }
+
+        static bool IsFullScreenBusy()
+        {
+            int state;
+            // QUNS_BUSY (full-screen app), QUNS_RUNNING_D3D_FULL_SCREEN, QUNS_PRESENTATION_MODE.
+            try { return SHQueryUserNotificationState(out state) == 0 && (state == 2 || state == 3 || state == 4); }
+            catch (EntryPointNotFoundException) { return false; }
+        }
+
+        // Reads the current scheme and base size (they may have changed since the last shake).
+        static bool LoadScheme()
+        {
+            string[] current = new string[3];
+            for (int i = 0; i < 3; i++)
+            {
+                var sb = new System.Text.StringBuilder(1024);
+                uint size = 2048;
+                string path = null;
+                // RRF_RT_REG_SZ also returns REG_EXPAND_SZ values, already expanded.
+                if (RegGetString(HKCU, CursorsKey, CursorNames[i], 0x2, IntPtr.Zero, sb, ref size) == 0) path = sb.ToString();
+                if (string.IsNullOrEmpty(path) && CursorFallbacks[i] != null)
+                    path = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Cursors", CursorFallbacks[i]);
+                current[i] = (path != null && System.IO.File.Exists(path)) ? path : null;
+            }
+            int size32 = 0; uint dwordSize = 4;
+            if (RegGetDword(HKCU, CursorsKey, "CursorBaseSize", 0x18, IntPtr.Zero, out size32, ref dwordSize) != 0 || size32 < 16)
+                size32 = GetSystemMetrics(13);   // SM_CXCURSOR
+            paths = current;
+            baseSize = size32;
+            return paths[0] != null;
+        }
+
+        // Pixel size for grown = 0..1, rounded to SizeStep so near-identical frames aren't redrawn.
+        static int SizeFor(double grown)
+        {
+            int target = Math.Max(baseSize, Math.Min(MaxSize, baseSize * GrowFactor));
+            return baseSize + (int)Math.Round((target - baseSize) * grown / SizeStep) * SizeStep;
+        }
+
+        // Which of Arrow / IBeam / Hand is on screen now, or -1 if it's another cursor (wait, resize...).
+        static int VisibleCursor()
+        {
+            var ci = new CURSORINFO();
+            ci.cbSize = Marshal.SizeOf(typeof(CURSORINFO));
+            if (!GetCursorInfo(ref ci) || ci.hCursor == IntPtr.Zero) return -1;
+            for (int i = 0; i < 3; i++)
+                if (ci.hCursor == LoadCursor(IntPtr.Zero, new IntPtr(CursorIds[i]))) return i;
+            return -1;
+        }
+
+        // Sets the visible cursor to this size. Only that one: SetSystemCursor's cost grows with area
+        // (one cursor: ~4 ms at 128 px, ~15 ms at 256, ~34 ms at 384), so all three made every frame
+        // near full size late. The others are resized when they appear; Restore() resets them all.
+        // Loading straight from the file each frame costs no more than copying a cached handle
+        // (measured), so there is no cache, and SetSystemCursor takes ownership of the new handle.
+        static void Apply(int size)
+        {
+            int i = VisibleCursor();
+            if (i < 0 || paths[i] == null || applied[i] == size) return;
+            IntPtr h = LoadImage(IntPtr.Zero, paths[i], 2, size, size, 0x10);   // IMAGE_CURSOR, LR_LOADFROMFILE
+            if (h == IntPtr.Zero) return;
+            if (SetSystemCursor(h, CursorIds[i])) { enlarged = true; applied[i] = size; }
+            else DestroyCursor(h);
+        }
     }
 }
 '@
@@ -2069,13 +2325,14 @@ $HelpSections = [ordered]@{
         , @('Installs', 'One-click installs; a check means it is already installed. Update All Apps updates everything winget can.')
         , @('Customize Windows', 'Windows tweaks. A check means it is on; click again to undo it.')
         , @('Scripts', 'Speed Test, Ping Google and SimpleHelp Spy Detection (log, alert, start/stop).')
-        , @('Windows Sandbox', 'Open a throwaway sandbox, a proxy sandbox, PowerShell in a sandbox, or the clipboard website in a sandbox.')
+        , @('Windows Sandbox', 'Open a throwaway sandbox, a proxy sandbox, PowerShell in a sandbox, or the clipboard website in a sandbox (uBlock Origin Lite is installed before the site opens).')
         , @('Hide', 'Put the buddy away. Click the tray icon to bring it back.')
     )
     'Tray menu' = @(
         , @('SimpleHelp Spy Detection', 'Always watching while Wizard Buddy runs. When someone connects, it chimes, logs the time and your buddy turns into a penguin. Open this to see the log or clear the alert.')
         , @('Start with Windows', 'Start Wizard Buddy when you sign in. Click again to turn it off.')
         , @('Animate Tray Icon', 'Play your buddy in the tray instead of a still picture. Pin the icon to the taskbar to see it.')
+        , @('Shake to Find Pointer', 'Lost the pointer? Shake the mouse quickly back and forth and it grows for a moment, like on a Mac. On by default; click to turn it off. Not while a button is held or a full-screen game or video is running.')
         , @('Exit', 'Close Wizard Buddy.')
     )
 }
@@ -2539,7 +2796,7 @@ function Show-Base64Wizard {
 
 #region Buddy settings, tray icon and Start with Windows
 # Saved as strings under HKCU:\Software\WizardBuddy: Buddy (a $buddyMap name), Width, Height,
-# Opacity, X, Y, AnimateTrayIcon (True/False). Get-BuddySettings returns only the values that parse; anything else falls back
+# Opacity, X, Y, AnimateTrayIcon, ShakeToFind (True/False). Get-BuddySettings returns only the values that parse; anything else falls back
 # to the defaults (the Wizard at its own size, fully opaque, bottom-right).
 $BuddySettingsKey = 'HKCU:\Software\WizardBuddy'
 
@@ -2561,6 +2818,10 @@ function Get-BuddySettings {
     $Animate = $false
     if ($null -ne $Key.AnimateTrayIcon -and [bool]::TryParse([string]$Key.AnimateTrayIcon, [ref]$Animate)) {
         $Settings.AnimateTrayIcon = $Animate
+    }
+    $Shake = $false
+    if ($null -ne $Key.ShakeToFind -and [bool]::TryParse([string]$Key.ShakeToFind, [ref]$Shake)) {
+        $Settings.ShakeToFind = $Shake
     }
     return $Settings
 }
@@ -2973,6 +3234,13 @@ $Systray_Tool_Icon.Visible = $true
 # new one is caught within 12 seconds.
 Start-SpyWatch
 
+# Shake to Find Pointer: on unless turned off (ShakeToFind = False). Restore first, in case a
+# previous run was killed while the pointer was big (the cursor would otherwise stay big until
+# sign-out).
+function Test-ShakeToFind { (Get-BuddySettings).ShakeToFind -ne $false }
+[Win32WB.ShakeWB]::Restore()
+if (Test-ShakeToFind) { [Win32WB.ShakeWB]::Start() }
+
 $Menu_Help = $contextmenu.Items.Add("Help")
 $HelpIconBase64 = 'iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAMAAAC6V+0/AAAAWlBMVEVHcEwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACNqrUmAAAAHnRSTlMACgES3BvOfSGNBafFs7ufMdUpdeJWaoGY/Odfbz7oc/NRAAAA1ElEQVQY011QWRbCIAwEyr5vbWmt97+mBLT65APCZCaZBKHPIQT9HflQxqiV/UCLoNS15mja8E1z9GJdrKWoYXnzvI3wAOmZwuTuKUMFbkH7rBtgmT4gc5zncUHAodvFe5klnTFWi4Gzdnsm9AxWAsXTd1B71b9eDOso8wPqoGBuEGlzlDFTM6TL2wRFG2a063JU+PTL5JwEGqFY4UbY2ZEsCSwRxeWQK5BHWqbOevlZXeTuPXy2fB0h26i7t8dU5WHfQ6Ji+S6U5GK8D5v82z3B+o5f19gJKhplsbIAAAAASUVORK5CYII='
 $Menu_Help.Image = Get-IconFromBase64 $HelpIconBase64
@@ -2999,6 +3267,7 @@ $Menu_Startup.add_Click({
 $contextmenu.add_Opening({
         $Menu_Startup.Checked = Test-StartWithWindows
         $Menu_AnimateTray.Checked = [bool](Get-BuddySettings).AnimateTrayIcon
+        $Menu_ShakeToFind.Checked = [Win32WB.ShakeWB]::IsRunning
     })
 
 # Animate Tray Icon: plays the buddy's GIF in the tray instead of showing its first frame.
@@ -3007,6 +3276,21 @@ $Menu_AnimateTray = [System.Windows.Forms.ToolStripMenuItem]::new('Animate Tray 
 $Menu_AnimateTray.add_Click({
         Save-BuddySetting @{ AnimateTrayIcon = -not [bool](Get-BuddySettings).AnimateTrayIcon }
         Set-TrayIcon $script:TrayIconBase64
+    })
+
+# Shake to Find Pointer: shake the mouse and the pointer grows for a moment, like on a Mac.
+$Menu_ShakeToFind = [System.Windows.Forms.ToolStripMenuItem]::new('Shake to Find Pointer')
+[void]$contextmenu.Items.Add($Menu_ShakeToFind)
+$Menu_ShakeToFind.add_Click({
+        if ([Win32WB.ShakeWB]::IsRunning) {
+            [Win32WB.ShakeWB]::Stop()
+            Save-BuddySetting @{ ShakeToFind = $false }
+        }
+        else {
+            [Win32WB.ShakeWB]::Start()
+            Save-BuddySetting @{ ShakeToFind = $true }
+            Show-TrayNotice 'Shake to Find Pointer' 'Shake the mouse quickly back and forth and the pointer grows so you can spot it.'
+        }
     })
 
 #Separator
@@ -3019,6 +3303,8 @@ $Menu_Exit.Image = Get-IconFromBase64 $ExitIconBase64
 
 $Menu_Exit.add_Click({
         $Systray_Tool_Icon.Visible = $false
+        # Stop-Process skips every cleanup, so put the pointer back to normal size first.
+        [Win32WB.ShakeWB]::Stop()
         Stop-Process $pid -ErrorAction 'SilentlyContinue'
     })
 
@@ -3647,23 +3933,38 @@ Start-Process -FilePath $File -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', 
                     $Uri = Get-ClipboardWebUrl
                     if (-not $Uri) { return }
 
-                    # A fresh sandbox has no handler registered for http/https, so handing
-                    # the address to the shell only raises "We can't open this 'https' link"
-                    # (a dialog, not an error, so it can't be caught either). Edge has to be
-                    # launched by path with the URL as an argument. The sleep is still needed
-                    # because the sandbox desktop isn't ready the moment the logon command runs.
-                    $Url = $Uri.AbsoluteUri
-                    # Single quotes only inside $Inner — it is itself wrapped in the double
-                    # quotes of -Command, so a nested double quote would end the argument.
-                    $Inner = "Start-Sleep -Seconds 5; " +
-                    "`$Edge = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'; " +
-                    "if (-not (Test-Path `$Edge)) { `$Edge = 'C:\Program Files\Microsoft\Edge\Application\msedge.exe' }; " +
-                    "if (-not (Test-Path `$Edge)) { `$Edge = 'msedge.exe' }; " +
-                    "Start-Process `$Edge -ArgumentList '$Url'"
-                    $Command = "powershell.exe -NoProfile -WindowStyle Hidden -Command ""$Inner"""
+                    # The sandbox installs uBlock Origin Lite before it navigates. The logon command runs
+                    # as the sandbox's admin account, so it can set Edge's force-install policy (Lite is
+                    # MV3; Edge is switching the full MV2 uBlock Origin off through 2026). Edge is started
+                    # with no window so it fetches the extension, the script waits until the extension's
+                    # manifest is in the profile (up to 60 s; it opens the site anyway after that), and
+                    # only then opens the site in that Edge.
+                    # A fresh sandbox has no http/https handler ("We can't open this 'https' link"), so
+                    # Edge is launched by path with the URL as an argument. The script travels as
+                    # -EncodedCommand, so the URL needs no quoting beyond its own single quotes.
+                    $Url = $Uri.AbsoluteUri -replace "'", "''"
+                    $Script = @'
+$Id = 'cimighlppcgcoapaliogpjjdehbnofhn'   # uBlock Origin Lite on Edge Add-ons
+$Policy = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
+New-Item -Path "$Policy\ExtensionInstallForcelist" -Force | Out-Null
+Set-ItemProperty -Path "$Policy\ExtensionInstallForcelist" -Name '1' -Value "$Id;https://edge.microsoft.com/extensionwebstorebase/v1/crx"
+Set-ItemProperty -Path $Policy -Name 'HideFirstRunExperience' -Value 1 -Type DWord
+$Edge = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+if (-not (Test-Path $Edge)) { $Edge = 'C:\Program Files\Microsoft\Edge\Application\msedge.exe' }
+if (-not (Test-Path $Edge)) { $Edge = 'msedge.exe' }
+Start-Process $Edge -ArgumentList '--no-startup-window'
+$Extension = Join-Path $env:LOCALAPPDATA "Microsoft\Edge\User Data\Default\Extensions\$Id"
+$Clock = [Diagnostics.Stopwatch]::StartNew()
+while ($Clock.Elapsed.TotalSeconds -lt 60 -and -not (Get-ChildItem $Extension -Filter manifest.json -Recurse -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 500 }
+Start-Sleep -Seconds 1
+Start-Process $Edge -ArgumentList '__URL__'
+'@
+                    $Script = $Script.Replace('__URL__', $Url)
+                    $Encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Script))
+                    $Command = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand $Encoded"
 
                     Start-SandboxSession -Name 'Website' -LogonCommand $Command
-                    Show-TrayNotice -Title 'Windows Sandbox' -Text "Opening $($Uri.Host) in Windows Sandbox." -Icon 'Info'
+                    Show-TrayNotice -Title 'Windows Sandbox' -Text "Opening $($Uri.Host) in Windows Sandbox, with uBlock Origin Lite installed first." -Icon 'Info'
                 })
             #endregion
 
